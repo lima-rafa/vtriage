@@ -1,0 +1,26 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+.dist/
+build/
+
+# venv
+.venv/
+venv/
+
+# vtriage outputs
+artifacts/
+report/
+
+# OS/Editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea
+
+third_party/
+_oss/

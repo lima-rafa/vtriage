@@ -1,0 +1,67 @@
+[project]
+name = "zipcpu-example"
+artifact_root = "artifacts"
+report_dir = "report"
+keep_waveforms = true
+
+[runner]
+simulator = "verilator"
+cmd = "python scripts/sim_harness.py"
+workdir = "."
+
+[inputs]
+log_glob = "artifacts/**/log.txt"
+wave_glob = "artifacts/**/waves.vcd"
+meta_glob = "artifacts/**/meta.json"
+
+[failure_detection]
+patterns = [
+  { name="verilator_error", kind="ERROR", regex="(?i)%Error:|Assertion failed|\\$fatal|\\$error" },
+  { name="timeout", kind="TIMEOUT", regex="(?i)timeout|watchdog|deadlock" },
+  { name="mismatch", kind="MISMATCH", regex="(?i)mismatch|expected .* got .*|differs" }
+]
+
+[waveform]
+pre_window = 5000
+post_window = 500
+max_signals = 200
+max_samples_per_signal = 20000
+tail_event_window = 50000
+top_n = 20
+prefix_expand_levels = 2
+sketch_top_n = 12
+
+[clustering]
+method = "dbscan"
+eps = 0.35
+min_samples = 2
+bucket_by_log_first = true
+
+[report]
+formats = ["md", "html"]
+include_top_signals = 20
+include_examples_per_cluster = 5
+include_raw_log_snippet_lines = 40
+
+[copilot]
+enabled = false
+
+[profiles.quick]
+seeds = 20
+cmd = "python scripts/sim_harness.py"
+workdir = "examples/zipcpu"
+[profiles.quick.waveform]
+tail_event_window = 50000
+top_n = 12
+sketch_top_n = 12
+prefix_expand_levels = 2
+
+[profiles.full]
+seeds = 200
+workdir = "examples/zipcpu"
+strict_waves = true
+[profiles.full.waveform]
+tail_event_window = 200000
+top_n = 30
+sketch_top_n = 12
+prefix_expand_levels = 3
