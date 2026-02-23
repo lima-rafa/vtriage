@@ -6,7 +6,7 @@ on:
 
 jobs:
   smoke:
-    name: vtriage smoke (${{ matrix.os }})
+    name: smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,10 +28,15 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e .
 
-      # IMPORTANT: o harness gera FAILs de propósito (~30%), então não pode quebrar o job
-      - name: Run + analyze (quick)  (allow FAIL seeds)
+      # Run pode retornar exit code 1 (seeds FAIL são esperados no harness).
+      # Então permitimos e garantimos o analyze em seguida.
+      - name: Run quick (allow FAIL seeds)
         run: |
-          vtriage run --workdir ./examples/zipcpu --profile quick || true
+          vtriage run --workdir ./examples/zipcpu --profile quick --no-analyze || true
+
+      - name: Analyze latest
+        run: |
+          vtriage analyze --latest --out ./report --reuse-index
 
       - name: Upload report
         uses: actions/upload-artifact@v4

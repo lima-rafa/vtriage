@@ -2,11 +2,24 @@ name: oss-validate
 
 on:
   workflow_dispatch:
-  push:
-  pull_request:
+    inputs:
+      target:
+        description: "Target to validate"
+        type: choice
+        required: true
+        default: "zipcpu"
+        options:
+          - zipcpu
+          - litex
+          - vexriscv
+          - all
+  #schedule:
+    #- cron: "0 3 * * 1"  # seg 03:00 UTC (opcional, pode remover)
 
 jobs:
   zipcpu-real:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all' }}
+
     runs-on: ubuntu-latest
 
     steps:
@@ -75,6 +88,8 @@ jobs:
           fi
 
   litex-real:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') }}
+
     runs-on: ubuntu-latest
 
     steps:
@@ -131,6 +146,8 @@ jobs:
           path: artifacts/
 
   vexriscv-real:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') }}
+
     runs-on: ubuntu-latest
 
     steps:
