@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import re
+import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable
@@ -42,14 +43,21 @@ _RE_FLOAT = re.compile(r"\b\d+\.\d+\b")
 _RE_INT = re.compile(r"(?<![A-Za-z_])\d+(?![A-Za-z_])")
 _RE_PATH = re.compile(
     r"(?i)(?:"
-    r"[A-Z]:\\[^ \t\n\r:]+"
-    r"|(?:(?<=^)|(?<=[\s\"'(\[]))/(?![A-Za-z_]\w*(?:/[A-Za-z_]\w*)+)[^ \t\n\r:]+"
-    r"|(?:(?<=^)|(?<=[\s\"'(\[]))\\[^ \t\n\r:]+"
-    r"|(?:(?<=^)|(?<=[\s\"'(\[]))\./[^ \t\n\r:]+"
+    r"[A-Z]:[\\/][^\s]+"          # C:\... or C:/...
+    r"|(?<![A-Za-z0-9_])/[^ \t\r\n:]+"  # /home/... (mas não tb/u_dut/u_core)
+    r"|(?<![A-Za-z0-9_])\\\\[^ \t\r\n:]+"  # \\server\share...
+    r"|(?<![A-Za-z0-9_])\./[^ \t\r\n:]+"   # ./relative/path
     r")"
 )
 _RE_WS = re.compile(r"\s+")
 
+def subcluster_by_wave_hash(items: list[CaseResult]) -> dict[str, list[CaseResult]]:
+    out: dict[str, list[CaseResult]] = {}
+    for r in items:
+        wh = r.wave_hash or "no_wave_hash"
+        out.setdefault(wh, []).append(r)
+    # ordena por tamanho desc
+    return dict(sorted(out.items(), key=lambda kv: len(kv[1]), reverse=True))
 
 def extract_location(s: str) -> str | None:
     for rx in _RE_LOC:
@@ -91,6 +99,11 @@ class CaseResult:
     prefixes: list[str] = field(default_factory=list)
     wave_hash: str | None = None
 
+DEBUG = os.environ.get("VTRIAGE_DEBUG", "").strip() not in ("", "0", "false", "False", "no", "NO")
+
+def _dbg(msg: str) -> None:
+    if DEBUG:
+        print(f"[debug] {msg}")
 
 def _waves_fingerprint(wave_path: Path) -> dict:
     st = wave_path.stat()
@@ -118,7 +131,7 @@ def _load_wave_cache(case_dir: Path) -> dict | None:
 
 def _save_wave_cache(case_dir: Path, payload: dict) -> None:
     cache_file = _cache_path(case_dir)  # <- CHAMA a função
-    print("[debug] cache_file=", cache_file, "type=", type(cache_file))
+    _dbg(f"cache_file={cache_file}, type={type(cache_file)}")
     cache_file.write_text(
         json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -206,7 +219,7 @@ def analyze_run(
     sketch_top_n: int = 12,
     prefix_levels: int = 2,
 ) -> tuple[list[CaseResult], dict[str, list[CaseResult]]]:
-    print("[debug] analyzer.py loaded from:", __file__)
+    _dbg(f"analyzer.py loaded from: {__file__}")
     patterns = patterns or DEFAULT_PATTERNS
     results: list[CaseResult] = []
 
@@ -265,9 +278,9 @@ def analyze_run(
                         top_total = cached.get("top_total") or []
                         used_cache = True
                 if used_cache:
-                    print(f"[cache] HIT  seed={seed:04d}")
+                    _dbg(f"[cache] HIT  seed={seed:04d}")
                 else:
-                    print(f"[cache] MISS seed={seed:04d}")
+                    _dbg(f"[cache] MISS seed={seed:04d}")
 
                 if not used_cache:
                     # 1) tenta location direto da linha do hit
@@ -341,7 +354,7 @@ def analyze_run(
                             },
                         )
                     except Exception as e:
-                        print("[yellow]warn[/yellow]: failed to save wave cache:", e)
+                        _dbg(f"[yellow]warn[/yellow]: failed to save wave cache: {e}")
 
         results.append(
             CaseResult(

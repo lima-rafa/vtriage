@@ -17,3 +17,9 @@ dependencies = [
 
 [project.scripts]
 vtriage = "vtriage.cli:app"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=4.1",
+]

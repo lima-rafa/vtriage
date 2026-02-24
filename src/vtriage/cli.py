@@ -206,9 +206,9 @@ meta_glob = "artifacts/**/meta.json"
 
 [failure_detection]
 patterns = [
-  { name="verilator_error", kind="ERROR", regex="(?i)%Error:|Assertion failed|\\$fatal|\\$error" },
-  { name="timeout", kind="TIMEOUT", regex="(?i)timeout|watchdog|deadlock" },
-  { name="mismatch", kind="MISMATCH", regex="(?i)mismatch|expected .* got .*|differs" }
+    { name="verilator_error", kind="ERROR", regex="(?i)%Error:|Assertion failed|\\$fatal|\\$error" },
+    { name="timeout", kind="TIMEOUT", regex="(?i)timeout|watchdog|deadlock" },
+    { name="mismatch", kind="MISMATCH", regex="(?i)mismatch|expected .* got .*|differs" }
 ]
 
 [copilot]
@@ -218,9 +218,9 @@ enabled = false
 def _split_signature(sig: str) -> tuple[str, str, str, str]:
     """
     Accepts:
-      A) KIND::pattern::location::message
-      B) KIND::pattern::message   (legacy)
-      C) anything else
+        A) KIND::pattern::location::message
+        B) KIND::pattern::message   (legacy)
+        C) anything else
     Also tries to infer location from message (e.g. "... at tb/u_dut/u_core: ...").
     """
     parts = sig.split("::")
@@ -259,51 +259,51 @@ HTML_TEMPLATE = """\
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>vtriage report</title>
-  <style>
-    :root {
-      --bg: #0b0d12;
-      --panel: #111523;
-      --muted: #aab2c0;
-      --text: #e8ecf3;
-      --border: rgba(255,255,255,.08);
-      --ok: #3ddc97;
-      --bad: #ff5c5c;
-      --warn: #ffcc66;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-    }
-    body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
-    a { color: #8ab4ff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
-    .top { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
-    .title { font-size: 22px; font-weight: 700; letter-spacing: .2px; }
-    .sub { margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 13px; }
-    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
-    .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
-    .v { margin-top: 6px; font-size: 22px; font-weight: 700; }
-    .v.ok { color: var(--ok); }
-    .v.bad { color: var(--bad); }
-    .v.warn { color: var(--warn); }
-    .section { margin-top: 22px; }
-    .section h2 { font-size: 16px; margin: 0 0 10px 0; color: #d9def0; }
-    .cluster { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
-    .cluster-head { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
-    .cluster-title { font-size: 15px; font-weight: 700; }
-    .pill { font-family: var(--mono); font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
-    .grid { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; margin-top: 10px; }
-    .lbl { color: var(--muted); font-size: 12px; }
-    .val { font-family: var(--mono); font-size: 12.5px; word-break: break-word; }
-    details { margin-top: 10px; }
-    summary { cursor: pointer; color: #cbd4ff; font-size: 13px; }
-    pre { margin: 10px 0 0 0; padding: 12px; background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 12px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.45; }
-    .footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
-    @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } .grid { grid-template-columns: 120px 1fr; } }
-  </style>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>vtriage report</title>
+    <style>
+        :root {
+        --bg: #0b0d12;
+        --panel: #111523;
+        --muted: #aab2c0;
+        --text: #e8ecf3;
+        --border: rgba(255,255,255,.08);
+        --ok: #3ddc97;
+        --bad: #ff5c5c;
+        --warn: #ffcc66;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+        }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+        a { color: #8ab4ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+        .top { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+        .title { font-size: 22px; font-weight: 700; letter-spacing: .2px; }
+        .sub { margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 13px; }
+        .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+        .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+        .v { margin-top: 6px; font-size: 22px; font-weight: 700; }
+        .v.ok { color: var(--ok); }
+        .v.bad { color: var(--bad); }
+        .v.warn { color: var(--warn); }
+        .section { margin-top: 22px; }
+        .section h2 { font-size: 16px; margin: 0 0 10px 0; color: #d9def0; }
+        .cluster { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+        .cluster-head { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+        .cluster-title { font-size: 15px; font-weight: 700; }
+        .pill { font-family: var(--mono); font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+        .grid { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; margin-top: 10px; }
+        .lbl { color: var(--muted); font-size: 12px; }
+        .val { font-family: var(--mono); font-size: 12.5px; word-break: break-word; }
+        details { margin-top: 10px; }
+        summary { cursor: pointer; color: #cbd4ff; font-size: 13px; }
+        pre { margin: 10px 0 0 0; padding: 12px; background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 12px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+        .footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+        @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } .grid { grid-template-columns: 120px 1fr; } }
+    </style>
 </head>
 <body>
   <div class="wrap">
@@ -453,13 +453,13 @@ def validate_artifact_dir(
     """
     Validates the artifact directory contract:
 
-      artifact_dir/
-        meta.json (optional)
-        tests/
-          seed_0001/
-            log.txt
-            fail.json (optional)
-            waves.vcd (optional unless strict_waves)
+        artifact_dir/
+            meta.json (optional)
+            tests/
+            seed_0001/
+                log.txt
+                fail.json (optional)
+                waves.vcd (optional unless strict_waves)
     """
 
     raw = str(artifact_dir)
@@ -550,6 +550,8 @@ def analyze(
     prefix_levels: Optional[int] = typer.Option(None, "--prefix-levels", help="Níveis de expansão de prefix (ex: 2,3)"),
     reuse_index: bool = typer.Option(True, "--reuse-index/--no-reuse-index", help="Reusa run_index.json quando válido"),
     rebuild_index: bool = typer.Option(False, "--rebuild-index", help="Ignora run_index.json e recalcula"),
+    debug: bool = typer.Option(False, "--debug", help="Mostra logs de debug (cache/index/etc.)"),
+    json_out: bool = typer.Option(False, "--json", help="Gera também report.json")
 ):
     out.mkdir(parents=True, exist_ok=True)
 
@@ -600,6 +602,10 @@ def analyze(
     )
 
     index = None
+    if debug:
+        print("[debug] reuse_index=", reuse_index, "rebuild_index=", rebuild_index)
+        print("[debug] index_loaded=", bool(index))
+
     if reuse_index and (not rebuild_index):
         idx = load_run_index(artifact_dir)
         if idx and idx.get("schema") == "run_index_v1":
@@ -608,54 +614,71 @@ def analyze(
                 current_fp = run_fingerprint(artifact_dir)
                 if idx.get("fingerprint") == current_fp:
                     index = idx
-                    print("[green]index[/green]: reuse run_index.json")
+                    if index:
+                        if debug:
+                            print("[debug] index: reuse run_index.json")
+                            print("[debug] index: report from run_index.json (no re-analyze)")
+                        else:
+                            print("index: reuse run_index.json")
+                            print("index: report from run_index.json (no re-analyze)")
                 else:
                     print("[yellow]index[/yellow]: fingerprint changed -> rebuild")
             else:
                 print("[yellow]index[/yellow]: knobs changed -> rebuild")
-
     results = None
     clusters = None
-
     if index is not None:
-        # ---------- REUSE INDEX ----------
         # constrói results/clusters mínimos a partir do index
         results = []
         clusters = {}
+        clusters_data: list[dict] = []
+        total = passes = fails = 0
+        # ---------- REUSE INDEX ----------
+        if debug:
+            print("[debug] index: reuse run_index.json")
+            print("[debug] index: report from run_index.json (no re-analyze)")
+        else:
+            print("index: reuse run_index.json")
+            print("index: report from run_index.json (no re-analyze)")
 
-        # seeds -> results mínimos (só o que seu relatório usa)
-        for s in index.get("seeds", []):
-            # CaseResult mínimo: precisa seed, case_dir, passed, hit, signature, prefixes, wave_hash, top_tail/top_total (opcionais)
-            # hit/snippet: a gente vai ler log do exemplar na hora do report, então hit pode ser None.
-            case_dir = Path(s["case_dir"])
-            results.append(
-                CaseResult(
-                    seed=int(s["seed"]),
-                    case_dir=case_dir,
-                    passed=bool(s["passed"]),
-                    hit=None,
-                    signature=str(s["signature"]),
-                    wave_hash=s.get("wave_hash"),
-                    prefixes=s.get("prefixes") or [],
-                    # top_tail/top_total: se quiser, pode tentar carregar do wave_cache.json do exemplar depois
-                    top_tail=[],
-                    top_total=[],
-                )
-            )
+        summary = index.get("summary") or {}
+        total = int(summary.get("total", 0))
+        passes = int(summary.get("passes", 0))
+        fails = int(summary.get("fails", 0))
 
-        # clusters do index
-        # index["clusters"] tem signature, seeds, subclusters
-        seed_to_result = {r.seed: r for r in results}
-        for c in index.get("clusters", []):
-            sig = c["signature"]
-            items = []
-            for seed in c.get("seeds", []):
-                r = seed_to_result.get(int(seed))
-                if r:
-                    items.append(r)
-            clusters[sig] = items
+        # clusters_data pronto (vamos só enriquecer opcionalmente)
+        clusters_data = []
+        for c in (index.get("clusters") or []):
+            # sua estrutura atual do clusters_data espera campos:
+            # kind, pattern, location, message, count, seeds_str, example_seed, snippet, top_tail, top_total, subclusters
+            kind, pattern, location, msg = _split_signature(c["signature"])
 
-        print("[green]index[/green]: report from run_index.json (no re-analyze)")
+            seeds_list = c.get("seeds") or []
+            seeds_str = ", ".join(str(s) for s in seeds_list[:30]) + (" ..." if len(seeds_list) > 30 else "")
+
+            # exemplar: 1º seed do cluster
+            example_seed = int(seeds_list[0]) if seeds_list else None
+
+            clusters_data.append({
+                "kind": kind,
+                "pattern": pattern,
+                "location": location,
+                "message": msg,
+                "count": int(c.get("count", len(seeds_list))),
+                "seeds": seeds_str,
+                "example_seed": example_seed,
+                "snippet": "",      # opcional preencher depois
+                "top_tail": [],     # opcional
+                "top_total": [],    # opcional
+                "subclusters": [
+                    {
+                        "wave_hash": sc.get("wave_hash"),
+                        "count": int(sc.get("count", 0)),
+                        "seeds": ", ".join(str(s) for s in (sc.get("seeds") or [])[:30]) + (" ..." if len((sc.get("seeds") or [])) > 30 else ""),
+                    }
+                    for sc in (c.get("subclusters") or [])
+                ]
+            })
 
     else:
         # ---------- REBUILD ----------
@@ -667,20 +690,20 @@ def analyze(
             prefix_levels=params["prefix_levels"],
         )
 
-    # Strict-waves extra (redundante se validate_artifact_dir já fizer certo, mas ok manter)
-    if strict_waves:
-        missing = [
-            r.seed for r in results
-            if (not r.passed) and not (r.case_dir / "waves.vcd").exists()
-        ]
-        if missing:
-            missing_str = ", ".join(str(s) for s in missing[:30]) + (" ..." if len(missing) > 30 else "")
-            print("[red]error[/red]: strict-waves: faltando waves.vcd em seeds FAIL:", missing_str)
-            raise typer.Exit(code=3)
+        # strict waves só faz sentido aqui porque temos results
+        if strict_waves:
+            missing = [
+                r.seed for r in results
+                if (not r.passed) and not (r.case_dir / "waves.vcd").exists()
+            ]
+            if missing:
+                missing_str = ", ".join(str(s) for s in missing[:30]) + (" ..." if len(missing) > 30 else "")
+                print("[red]error[/red]: strict-waves: faltando waves.vcd em seeds FAIL:", missing_str)
+                raise typer.Exit(code=3)
 
-    total = len(results)
-    fails = sum(1 for r in results if not r.passed)
-    passes = total - fails
+        total = len(results)
+        fails = sum(1 for r in results if not r.passed)
+        passes = total - fails
 
     md: list[str] = []
     md.append("# vtriage report")
@@ -696,8 +719,22 @@ def analyze(
 
     clusters_data: list[dict] = []
 
-    if not clusters:
-        md.append("_No failures detected._")
+    if index is not None:
+        if not clusters_data:
+            md.append("_No failures detected._")
+        else:
+            for i, c in enumerate(clusters_data, start=1):
+                md.append(f"### {i}. {c['kind']} :: {c['pattern']}")
+                md.append(f"- count: **{c['count']}**")
+                md.append(f"- seeds: {c['seeds']}")
+                md.append(f"- location: `{c['location']}`")
+                md.append(f"- message: `{c['message']}`")
+                md.append("")
+                if c.get("subclusters"):
+                    md.append("**Subclusters (by wave hash)**")
+                    for j, sc in enumerate(c["subclusters"], start=1):
+                        md.append(f"- {j}. `{sc['wave_hash']}` — count **{sc['count']}**, seeds: {sc['seeds']}")
+                    md.append("")
     else:
         for i, (sig, items) in enumerate(clusters.items(), start=1):
             kind, pattern, location, msg = _split_signature(sig)
@@ -797,6 +834,23 @@ def analyze(
     )
     (out / "report.html").write_text(html, encoding="utf-8")
 
+    if json_out:
+        payload = {
+            "schema": "vtriage_report_v1",
+            "artifact": str(artifact_dir),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "knobs": {
+                "tail_event_window": params["tail_event_window"],
+                "top_n": params["top_n"],
+                "sketch_top_n": params["sketch_top_n"],
+                "prefix_levels": params["prefix_levels"],
+                "profile": (profile or None),
+            },
+            "summary": {"total": total, "passes": passes, "fails": fails},
+            "clusters": clusters_data,
+        }
+        (out / "report.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
     print("[green]OK[/green] relatório gerado em", out)
 
 @app.command()
@@ -812,6 +866,7 @@ def run(
     strict_waves: bool = typer.Option(False, "--strict-waves"),
     lenient: bool = typer.Option(False, "--lenient"),
     profile: str = typer.Option("", "--profile", "-p", help="Nome do profile em .vtriage.toml (ex: quick, full)"),
+    debug: bool = typer.Option(False, "--debug", help="Mostra logs de debug (cache/index/etc.)"),
 ):
     """
     Executa seeds e gera artifacts/run_... (cross-platform).
@@ -930,7 +985,11 @@ def run(
         print("[cyan]profile[/cyan]:", profile)
     print("[cyan]run cmd[/cyan]:", " ".join(args))
 
-    proc = subprocess.run(args, capture_output=True, text=True)
+    env = os.environ.copy()
+    if debug:
+        env["VTRIAGE_DEBUG"] = "1"
+
+    proc = subprocess.run(args, capture_output=True, text=True, env=env)
 
     run_dir = ""
     for line in (proc.stdout or "").splitlines():
@@ -961,8 +1020,10 @@ def run(
         analyze_args.append("--lenient")
 
     print("[cyan]analyze cmd[/cyan]:", " ".join(map(str, analyze_args)))
-
-    subprocess.run(analyze_args)
+    env = os.environ.copy()
+    if debug:
+        env["VTRIAGE_DEBUG"] = "1"
+    subprocess.run(analyze_args, env=env)
     raise typer.Exit(code=proc.returncode)
 
 @app.command("list-runs")
