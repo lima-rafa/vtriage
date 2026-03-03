@@ -13,17 +13,27 @@ on:
           - litex
           - vexriscv
           - all
-  #schedule:
-    #- cron: "0 3 * * 1"  # seg 03:00 UTC (opcional, pode remover)
+      mode:
+        description: "What to run"
+        type: choice
+        required: true
+        default: "both"
+        options:
+          - smoke
+          - real
+          - both
+  # (opcional) agenda semanal — deixe comentado por enquanto
+  # schedule:
+  #   - cron: "0 3 * * 1"
 
 jobs:
-  zipcpu-real:
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all' }}
-
+  # ---------------------------
+  # ZIPCPU — SMOKE
+  # ---------------------------
+  zipcpu-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'smoke' || github.event.inputs.mode == 'both') }}
     runs-on: ubuntu-latest
-
-    timeout-minutes: 30
-
+    timeout-minutes: 20
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -49,53 +59,39 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/ZipCPU/zipcpu.git _oss/zipcpu
 
-      # Aqui a gente faz run seeds=1 (porque é um “teste real”, não seed-based)
-      # e permite falha sem quebrar o job, pra sempre gerar report/artifacts.
-      - name: vtriage run (ZipCPU real build/test) -> analyze -> report (allow fail)
+      # Smoke: só valida que consegue "entrar" no repo e rodar algo bem curto.
+      - name: vtriage run (ZipCPU smoke) -> analyze -> report (allow fail)
         shell: bash
         run: |
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'make rtl && make -C sim/verilator div_tb mpy_tb && ./sim/verilator/div_tb && ./sim/verilator/mpy_tb'" \
+            --cmd "bash -lc 'verilator --version && make -n rtl'" \
             --workdir _oss/zipcpu \
             --artifact-root artifacts \
             --out report \
             --no-analyze || true
 
-          # analisa o run mais recente gerado
           vtriage analyze --latest --out ./report --reuse-index
 
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: zipcpu-report
+          name: zipcpu-smoke-report
           path: report/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zipcpu-artifacts
+          name: zipcpu-smoke-artifacts
           path: artifacts/
 
-      - name: Debug (show last logs on failure)
-        if: failure()
-        shell: bash
-        run: |
-          echo "Latest artifacts dir:"
-          ls -la artifacts || true
-          latest=$(ls -1 artifacts | grep '^run_' | sort -r | head -n 1 || true)
-          echo "latest=$latest"
-          if [ -n "$latest" ]; then
-            find "artifacts/$latest/tests" -name log.txt -maxdepth 2 -print -exec tail -n 120 {} \; || true
-          fi
-
-  litex-real:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') }}
-
+  # ---------------------------
+  # ZIPCPU — REAL BUILD/TEST
+  # ---------------------------
+  zipcpu-real:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'real' || github.event.inputs.mode == 'both') }}
     runs-on: ubuntu-latest
-
-    timeout-minutes: 30
-
+    timeout-minutes: 40
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -109,6 +105,63 @@ jobs:
       - name: Install vtriage (editable)
         run: |
           python -m pip install -U pip
+          python -m pip install -e .
+
+      - name: System deps (Verilator + libs)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator g++ make libelf-dev libncurses-dev git
+
+      - name: Clone ZipCPU
+        run: |
+          mkdir -p _oss
+          git clone --depth 1 https://github.com/ZipCPU/zipcpu.git _oss/zipcpu
+
+      - name: vtriage run (ZipCPU real build/test) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
+          vtriage run \
+            --seeds 1 \
+            --cmd "bash -lc 'make rtl && make -C sim/verilator div_tb mpy_tb && ./sim/verilator/div_tb && ./sim/verilator/mpy_tb'" \
+            --workdir _oss/zipcpu \
+            --artifact-root artifacts \
+            --out report \
+            --no-analyze || true
+
+          vtriage analyze --latest --out ./report --reuse-index
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zipcpu-real-report
+          path: report/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zipcpu-real-artifacts
+          path: artifacts/
+
+  # ---------------------------
+  # LITEX — SMOKE
+  # ---------------------------
+  litex-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'smoke' || github.event.inputs.mode == 'both') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout vtriage
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install vtriage (editable) + deps
+        run: |
+          python -m pip install -U pip wheel setuptools
           python -m pip install migen
           python -m pip install -e .
 
@@ -117,14 +170,11 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/enjoy-digital/litex.git _oss/litex
 
-      - name: Install LiteX (editable) + deps
-        shell: bash
+      - name: Install LiteX (editable)
         run: |
-          python -m pip install -U pip wheel setuptools
           python -m pip install -e _oss/litex
 
-      # Smoke real: importa litex e roda um comando "leve"
-      - name: vtriage run (LiteX smoke) -> analyze -> report (allow fail)
+      - name: vtriage run (LiteX smoke import) -> analyze -> report (allow fail)
         shell: bash
         run: |
           vtriage run \
@@ -140,22 +190,80 @@ jobs:
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: litex-report
+          name: litex-smoke-report
           path: report/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: litex-artifacts
+          name: litex-smoke-artifacts
           path: artifacts/
 
-  vexriscv-real:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') }}
-
+  # ---------------------------
+  # LITEX — REAL (leve, mas "real")
+  # ---------------------------
+  litex-real:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'real' || github.event.inputs.mode == 'both') }}
     runs-on: ubuntu-latest
-
     timeout-minutes: 30
+    steps:
+      - name: Checkout vtriage
+        uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install vtriage (editable) + deps
+        run: |
+          python -m pip install -U pip wheel setuptools
+          python -m pip install migen
+          python -m pip install -e .
+
+      - name: Clone LiteX
+        run: |
+          mkdir -p _oss
+          git clone --depth 1 https://github.com/enjoy-digital/litex.git _oss/litex
+
+      - name: Install LiteX (editable)
+        run: |
+          python -m pip install -e _oss/litex
+
+      # Real: roda um comando de geração (não é full SoC build, mas é mais real que só import).
+      - name: vtriage run (LiteX real command) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
+          vtriage run \
+            --seeds 1 \
+            --cmd "bash -lc 'python -m litex.soc.integration.soc_core --help >/dev/null && echo litex-real-ok'" \
+            --workdir _oss/litex \
+            --artifact-root artifacts \
+            --out report \
+            --no-analyze || true
+
+          vtriage analyze --latest --out ./report --reuse-index
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: litex-real-report
+          path: report/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: litex-real-artifacts
+          path: artifacts/
+
+  # ---------------------------
+  # VEXRISCV — SMOKE
+  # ---------------------------
+  vexriscv-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'smoke' || github.event.inputs.mode == 'both') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -181,31 +289,12 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
 
-      - name: Cache coursier/sbt
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/coursier
-            ~/.ivy2/cache
-            ~/.sbt
-          key: ${{ runner.os }}-sbt-${{ hashFiles('_oss/vexriscv/**/build.sbt', '_oss/vexriscv/**/project/**') }}
-          restore-keys: |
-            ${{ runner.os }}-sbt-
-
-      # sbt: usamos o wrapper do próprio repo (se existir) ou instalamos sbt
-      - name: Install sbt-extras (robust)
-        shell: bash
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/paulp/sbt-extras/master/sbt > /usr/local/bin/sbt
-          chmod +x /usr/local/bin/sbt
-          sbt --version || true
-
-      - name: vtriage run (VexRiscv sbt smoke) -> analyze -> report (allow fail)
+      - name: vtriage run (VexRiscv smoke) -> analyze -> report (allow fail)
         shell: bash
         run: |
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'cd _oss/vexriscv && sbt -no-colors compile'" \
+            --cmd "bash -lc 'java -version && ls -la | head -n 20'" \
             --workdir _oss/vexriscv \
             --artifact-root artifacts \
             --out report \
@@ -216,11 +305,85 @@ jobs:
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: vexriscv-report
+          name: vexriscv-smoke-report
           path: report/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vexriscv-artifacts
+          name: vexriscv-smoke-artifacts
+          path: artifacts/
+
+  # ---------------------------
+  # VEXRISCV — REAL (compile)
+  # ---------------------------
+  vexriscv-real:
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'real' || github.event.inputs.mode == 'both') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout vtriage
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install vtriage (editable)
+        run: |
+          python -m pip install -U pip wheel setuptools
+          python -m pip install -e .
+
+      - name: System deps (Java)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-jdk git
+
+      - name: Clone VexRiscv
+        run: |
+          mkdir -p _oss
+          git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
+
+      - name: Install sbt (if needed)
+        shell: bash
+        run: |
+          if [ -f "_oss/vexriscv/sbt" ]; then
+            echo "Using repo sbt script."
+            chmod +x _oss/vexriscv/sbt || true
+          else
+            echo "Installing sbt..."
+            sudo apt-get install -y sbt || true
+          fi
+
+      - name: vtriage run (VexRiscv real compile) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
+          if [ -f "./sbt" ]; then
+            CMD="./sbt -no-colors compile"
+          else
+            CMD="sbt -no-colors compile"
+          fi
+
+          vtriage run \
+            --seeds 1 \
+            --cmd "bash -lc '$CMD'" \
+            --workdir _oss/vexriscv \
+            --artifact-root artifacts \
+            --out report \
+            --no-analyze || true
+
+          vtriage analyze --latest --out ./report --reuse-index
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vexriscv-real-report
+          path: report/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vexriscv-real-artifacts
           path: artifacts/
