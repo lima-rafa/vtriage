@@ -24,6 +24,9 @@ class VtriageConfig:
     waveform_top_n: int
     waveform_sketch_top_n: int
     waveform_prefix_expand_levels: int
+    waveform_max_bytes: int
+    waveform_tail_bytes: int
+    waveform_max_events: int
 
     # ---- NEW: report knobs ----
     report_include_top_signals: int
@@ -34,6 +37,8 @@ class VtriageConfig:
     @staticmethod
     def load(*, repo_root: Path, cfg_path: Path | None = None) -> "VtriageConfig":
         cfg_path = cfg_path or (repo_root / ".vtriage.toml")
+
+
 
         data: dict[str, Any] = {}
         if cfg_path.exists():
@@ -62,6 +67,9 @@ class VtriageConfig:
         waveform_sketch_top_n = int(waveform.get("sketch_top_n", 12))
         waveform_prefix_expand_levels = int(waveform.get("prefix_expand_levels", 2))
 
+        waveform_max_bytes = int(waveform.get("max_bytes", 200_000_000))
+        waveform_tail_bytes = int(waveform.get("tail_bytes", 50_000_000))
+        waveform_max_events = int(waveform.get("max_events", 5_000_000))
         # report defaults
         report_include_top_signals = int(report.get("include_top_signals", waveform_top_n))
 
@@ -76,8 +84,12 @@ class VtriageConfig:
             waveform_top_n=waveform_top_n,
             waveform_sketch_top_n=waveform_sketch_top_n,
             waveform_prefix_expand_levels=waveform_prefix_expand_levels,
+            waveform_max_bytes=waveform_max_bytes,
+            waveform_tail_bytes=waveform_tail_bytes,
+            waveform_max_events=waveform_max_events,
             report_include_top_signals=report_include_top_signals,
             profiles=profiles,
+
         )
 
     def get_profile(self, name: str) -> dict[str, Any]:
@@ -99,12 +111,21 @@ class VtriageConfig:
         top_n = self.waveform_top_n
         sketch_top_n = self.waveform_sketch_top_n
         prefix_levels = self.waveform_prefix_expand_levels
+        max_bytes = self.waveform_max_bytes
+        tail_bytes = self.waveform_tail_bytes
+        max_events = self.waveform_max_events
 
         if profile:
             p = self.get_profile(profile)
 
             wf = (p.get("waveform") or {})
             # waveform
+            if "max_bytes" in wf:
+                max_bytes = int(wf["max_bytes"])
+            if "tail_bytes" in wf:
+                tail_bytes = int(wf["tail_bytes"])
+            if "max_events" in wf:
+                max_events = int(wf["max_events"])
             if "tail_event_window" in wf:
                 tail_event_window = int(wf["tail_event_window"])
             if "top_n" in wf:
@@ -124,4 +145,7 @@ class VtriageConfig:
             "top_n": top_n,
             "sketch_top_n": sketch_top_n,
             "prefix_levels": prefix_levels,
+            "max_bytes": max_bytes,
+            "tail_bytes": tail_bytes,
+            "max_events": max_events,
         }

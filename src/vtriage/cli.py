@@ -176,6 +176,23 @@ def _validate_artifact_dir_or_die(
 
     return ad
 
+def _read_text_safe(p: Path, limit: int = 2000) -> list[str]:
+    try:
+        if not p.exists():
+            return []
+        return p.read_text(encoding="utf-8", errors="replace").splitlines()[:limit]
+    except Exception:
+        return []
+
+def _load_wave_cache_json(case_dir: Path) -> dict | None:
+    p = case_dir / "wave_cache.json"
+    try:
+        if not p.exists():
+            return None
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
 def resolve_latest_run(repo_root: Path, artifacts_root: Path) -> Path | None:
     if not artifacts_root.exists():
         return None
@@ -253,6 +270,36 @@ def _knobs_now(params: dict) -> dict:
         "top_n": int(params["top_n"]),
         "sketch_top_n": int(params["sketch_top_n"]),
         "prefix_levels": int(params["prefix_levels"]),
+        "max_bytes": int(params["max_bytes"]),
+        "tail_bytes": int(params["tail_bytes"]),
+        "max_events": int(params["max_events"]),
+    }
+
+# --- hardening: normalize vcd_meta coming from index/cache/analyzer ---
+def _coerce_vcd_meta(meta):
+    """
+    meta can be:
+      - None
+      - dict (from run_index.json / wave_cache.json)
+      - VcdReadMeta (runtime object)
+    We normalize to dict-or-None so report code is consistent.
+    """
+    if meta is None:
+        return None
+    if isinstance(meta, dict):
+        # normalize keys
+        return {
+            "size_bytes": meta.get("size_bytes"),
+            "used_tail_bytes": meta.get("used_tail_bytes"),
+            "truncated": bool(meta.get("truncated", False)),
+            "reason": meta.get("reason"),
+        }
+    # object case (VcdReadMeta)
+    return {
+        "size_bytes": getattr(meta, "size_bytes", None),
+        "used_tail_bytes": getattr(meta, "used_tail_bytes", None),
+        "truncated": bool(getattr(meta, "truncated", False)),
+        "reason": getattr(meta, "reason", None),
     }
 
 HTML_TEMPLATE = """\
@@ -551,7 +598,10 @@ def analyze(
     reuse_index: bool = typer.Option(True, "--reuse-index/--no-reuse-index", help="Reusa run_index.json quando válido"),
     rebuild_index: bool = typer.Option(False, "--rebuild-index", help="Ignora run_index.json e recalcula"),
     debug: bool = typer.Option(False, "--debug", help="Mostra logs de debug (cache/index/etc.)"),
-    json_out: bool = typer.Option(False, "--json", help="Gera também report.json")
+    json_out: bool = typer.Option(False, "--json", help="Gera também report.json"),
+    max_bytes: Optional[int] = typer.Option(None, "--max-bytes", help="Limite p/ ler VCD inteiro (bytes)"),
+    tail_bytes: Optional[int] = typer.Option(None, "--tail-bytes", help="Se truncar, quantos bytes do fim ler"),
+    max_events: Optional[int] = typer.Option(None, "--max-events", help="Limite de eventos de valor no VCD"),
 ):
     out.mkdir(parents=True, exist_ok=True)
 
@@ -594,11 +644,18 @@ def analyze(
         params["sketch_top_n"] = int(sketch_top_n)
     if prefix_levels is not None:
         params["prefix_levels"] = int(prefix_levels)
+    if max_bytes is not None:
+        params["max_bytes"] = int(max_bytes)
+    if tail_bytes is not None:
+        params["tail_bytes"] = int(tail_bytes)
+    if max_events is not None:
+        params["max_events"] = int(max_events)
 
     print(
         f"analyze params: tail={params['tail_event_window']} "
         f"top_n={params['top_n']} sketch_top_n={params['sketch_top_n']} "
-        f"prefix_levels={params['prefix_levels']}"
+        f"prefix_levels={params['prefix_levels']} "
+        f"max_bytes={params['max_bytes']} tail_bytes={params['tail_bytes']} max_events={params['max_events']}"
     )
 
     index = None
@@ -627,58 +684,187 @@ def analyze(
                 print("[yellow]index[/yellow]: knobs changed -> rebuild")
     results = None
     clusters = None
+    clusters_data = []
     if index is not None:
         # constrói results/clusters mínimos a partir do index
-        results = []
-        clusters = {}
-        clusters_data: list[dict] = []
-        total = passes = fails = 0
-        # ---------- REUSE INDEX ----------
-        if debug:
-            print("[debug] index: reuse run_index.json")
-            print("[debug] index: report from run_index.json (no re-analyze)")
-        else:
-            print("index: reuse run_index.json")
-            print("index: report from run_index.json (no re-analyze)")
 
         summary = index.get("summary") or {}
         total = int(summary.get("total", 0))
         passes = int(summary.get("passes", 0))
         fails = int(summary.get("fails", 0))
 
-        # clusters_data pronto (vamos só enriquecer opcionalmente)
         clusters_data = []
-        for c in (index.get("clusters") or []):
-            # sua estrutura atual do clusters_data espera campos:
-            # kind, pattern, location, message, count, seeds_str, example_seed, snippet, top_tail, top_total, subclusters
-            kind, pattern, location, msg = _split_signature(c["signature"])
 
-            seeds_list = c.get("seeds") or []
+        # 1) Monta clusters_data “cru” a partir do index
+        for cidx in (index.get("clusters") or []):
+            kind, pattern, location, msg = _split_signature(cidx.get("signature", ""))
+
+            seeds_list = cidx.get("seeds") or []
             seeds_str = ", ".join(str(s) for s in seeds_list[:30]) + (" ..." if len(seeds_list) > 30 else "")
-
-            # exemplar: 1º seed do cluster
             example_seed = int(seeds_list[0]) if seeds_list else None
+
+            subclusters = []
+            for sc in (cidx.get("subclusters") or []):
+                wh = sc.get("wave_hash")
+                if (wh is None) or (str(wh).strip() in ("", "-", "None")):
+                    wh = "no_wave_hash"
+                subclusters.append({
+                    "wave_hash": wh,
+                    "count": int(sc.get("count", 0)),
+                    "seeds": ", ".join(str(s) for s in (sc.get("seeds") or [])[:30]) +
+                            (" ..." if len((sc.get("seeds") or [])) > 30 else ""),
+                })
 
             clusters_data.append({
                 "kind": kind,
                 "pattern": pattern,
                 "location": location,
                 "message": msg,
-                "count": int(c.get("count", len(seeds_list))),
+                "count": int(cidx.get("count", len(seeds_list))),
                 "seeds": seeds_str,
                 "example_seed": example_seed,
-                "snippet": "",      # opcional preencher depois
-                "top_tail": [],     # opcional
-                "top_total": [],    # opcional
-                "subclusters": [
-                    {
-                        "wave_hash": sc.get("wave_hash"),
-                        "count": int(sc.get("count", 0)),
-                        "seeds": ", ".join(str(s) for s in (sc.get("seeds") or [])[:30]) + (" ..." if len((sc.get("seeds") or [])) > 30 else ""),
-                    }
-                    for sc in (c.get("subclusters") or [])
-                ]
+                "snippet": "",
+                "top_tail": [],
+                "top_total": [],
+                "prefixes": [],
+                "subclusters": subclusters,
+                "vcd_meta": None,
             })
+
+        # 2) Enriquecer clusters_data a partir de index["seeds"] + wave_cache.json + log
+        seed_rows = index.get("seeds") or []
+        seed_map = {int(s["seed"]): s for s in seed_rows if "seed" in s}
+
+        for c in clusters_data:
+            ex_seed = c.get("example_seed")
+            if ex_seed is None:
+                continue
+
+            srow = seed_map.get(int(ex_seed))
+            if not srow:
+                continue
+
+            case_dir = Path(srow["case_dir"])
+            log_path = Path(srow.get("log") or (case_dir / "log.txt"))
+
+            # snippet
+            lines = _read_text_safe(log_path, limit=200)
+            if lines:
+                c["snippet"] = "\n".join(lines[:10])
+
+            # prefixes (preferir o do seed row)
+            c["prefixes"] = srow.get("prefixes") or []
+
+            # vcd_meta (se veio no index)
+            c["vcd_meta"] = _coerce_vcd_meta(srow.get("vcd_meta"))
+
+            # top signals via wave_cache.json (se existir)
+            wc = _load_wave_cache_json(case_dir)
+            if wc:
+                c["top_tail"] = wc.get("top_tail") or []
+                c["top_total"] = wc.get("top_total") or []
+                if not c["prefixes"]:
+                    c["prefixes"] = wc.get("prefixes") or []
+                if c.get("vcd_meta") is None and wc and wc.get("vcd_meta") is not None:
+                    c["vcd_meta"] = _coerce_vcd_meta(wc.get("vcd_meta"))
+
+
+        # --- gera MD/HTML/JSON e encerra ---
+        md = []
+        md.append("# vtriage report")
+        md.append("")
+        md.append(f"Artifact: `{artifact_dir}`")
+        md.append("")
+        md.append(f"- Total: **{total}**")
+        md.append(f"- PASS: **{passes}**")
+        md.append(f"- FAIL: **{fails}**")
+        md.append("")
+        md.append("## Clusters (by signature)")
+        md.append("")
+
+        if not clusters_data:
+            md.append("_No failures detected._")
+        else:
+            for i, c in enumerate(clusters_data, start=1):
+                md.append(f"### {i}. {c['kind']} :: {c['pattern']}")
+                md.append(f"- count: **{c['count']}**")
+                md.append(f"- seeds: {c['seeds']}")
+                md.append(f"- location: `{c['location']}`")
+                md.append(f"- message: `{c['message']}`")
+                md.append("")
+
+                # scope_prefix
+                prefixes = c.get("prefixes") or []
+                if prefixes:
+                    md.append(f"- scope_prefix: `{prefixes[0]}`")
+                md.append("")
+
+                if c.get("subclusters"):
+                    md.append("**Subclusters (by wave hash)**")
+                    for j, sc in enumerate(c["subclusters"], start=1):
+                        wh = sc.get("wave_hash") or "no_wave_hash"
+                        md.append(f"- {j}. `{wh}` — count **{sc['count']}**, seeds: {sc['seeds']}")
+                    md.append("")
+
+                # snippet
+                if c.get("snippet"):
+                    md.append("```text")
+                    md.extend(c["snippet"].splitlines())
+                    md.append("```")
+                    md.append("")
+
+
+                # vcd meta (se truncou)
+                meta = _coerce_vcd_meta(c.get("vcd_meta"))
+                if meta and meta.get("truncated"):
+                    md.append("**VCD read limits applied**")
+                    md.append(f"- size_bytes: **{meta.get('size_bytes')}**")
+                    if meta.get("used_tail_bytes"):
+                        md.append(f"- used_tail_bytes: **{meta.get('used_tail_bytes')}**")
+                    md.append(f"- reason: `{meta.get('reason')}`")
+                    md.append("")
+
+                # top signals (sempre, independente de truncar)
+                top_tail = c.get("top_tail") or []
+                top_total = c.get("top_total") or []
+
+                md.append("**Top suspect signals (tail window)**")
+                if top_tail:
+                    for name, cnt in top_tail[:20]:
+                        md.append(f"- `{name}` — **{cnt}**")
+                else:
+                    md.append("_no signals in scope_")
+                md.append("")
+
+                md.append("**Top active signals (whole run)**")
+                if top_total:
+                    for name, cnt in top_total[:20]:
+                        md.append(f"- `{name}` — **{cnt}**")
+                else:
+                    md.append("_no signals in scope_")
+                md.append("")
+
+        (out / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+
+        html = render_html_report(
+            artifact=str(artifact_dir),
+            generated_at=index.get("generated_at") or datetime.now().isoformat(timespec="seconds"),
+            total=total,
+            passes=passes,
+            fails=fails,
+            clusters=clusters_data,
+        )
+        (out / "report.html").write_text(html, encoding="utf-8")
+
+        if json_out:
+            (out / "report.json").write_text(
+                json.dumps(index, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        print("[green]OK[/green] relatório gerado em", out)
+        return
+
 
     else:
         # ---------- REBUILD ----------
@@ -688,8 +874,10 @@ def analyze(
             top_n=params["top_n"],
             sketch_top_n=params["sketch_top_n"],
             prefix_levels=params["prefix_levels"],
+            max_bytes=params["max_bytes"],
+            tail_bytes=params["tail_bytes"],
+            max_events=params["max_events"],
         )
-
         # strict waves só faz sentido aqui porque temos results
         if strict_waves:
             missing = [
@@ -717,111 +905,109 @@ def analyze(
     md.append("## Clusters (by signature)")
     md.append("")
 
-    clusters_data: list[dict] = []
 
-    if index is not None:
-        if not clusters_data:
-            md.append("_No failures detected._")
+
+    for i, (sig, items) in enumerate(clusters.items(), start=1):
+        kind, pattern, location, msg = _split_signature(sig)
+        subs = subcluster_by_wave_hash(items)
+
+        ex = items[0]
+
+        lines = _read_lines(ex.case_dir / "log.txt")
+
+        loc = location
+        if loc == "-" or not loc:
+            loc = extract_location_from_lines(lines) or "-"
+
+        prefixes = ex.prefixes or []
+
+        snippet_text = ""
+        if ex.hit:
+            snippet_text = "\n".join(snippet(lines, ex.hit.line_no))
         else:
-            for i, c in enumerate(clusters_data, start=1):
-                md.append(f"### {i}. {c['kind']} :: {c['pattern']}")
-                md.append(f"- count: **{c['count']}**")
-                md.append(f"- seeds: {c['seeds']}")
-                md.append(f"- location: `{c['location']}`")
-                md.append(f"- message: `{c['message']}`")
-                md.append("")
-                if c.get("subclusters"):
-                    md.append("**Subclusters (by wave hash)**")
-                    for j, sc in enumerate(c["subclusters"], start=1):
-                        md.append(f"- {j}. `{sc['wave_hash']}` — count **{sc['count']}**, seeds: {sc['seeds']}")
-                    md.append("")
-    else:
-        for i, (sig, items) in enumerate(clusters.items(), start=1):
-            kind, pattern, location, msg = _split_signature(sig)
-            subs = subcluster_by_wave_hash(items)
+            # fallback: mostra as primeiras linhas do log (ou as últimas)
+            if lines:
+                snippet_text = "\n".join(lines[:6])
 
-            ex = items[0]
-            lines = _read_lines(ex.case_dir / "log.txt")
+        seeds = ", ".join(str(r.seed) for r in items[:30])
+        seeds_str = seeds + (" ..." if len(items) > 30 else "")
 
-            loc = location
-            if loc == "-" or not loc:
-                loc = extract_location_from_lines(lines) or "-"
+        md.append(f"### {i}. {kind} :: {pattern}")
+        md.append(f"- count: **{len(items)}**")
+        md.append(f"- seeds: {seeds_str}")
+        md.append(f"- location: `{loc}`")
+        md.append(f"- message: `{msg}`")
 
-            prefixes = ex.prefixes or []
+        if prefixes:
+            md.append(f"- scope_prefix: `{prefixes[0]}`")
+        md.append("")
 
-            snippet_text = ""
-            if ex.hit:
-                snippet_text = "\n".join(snippet(lines, ex.hit.line_no))
+        md.append("**Subclusters (by wave hash)**")
+        for j, (wh, subitems) in enumerate(subs.items(), start=1):
+            sub_seeds = ", ".join(str(r.seed) for r in subitems[:30])
+            md.append(f"- {j}. `{wh}` — count **{len(subitems)}**, seeds: {sub_seeds}{' ...' if len(subitems) > 30 else ''}")
+        md.append("")
+
+        if snippet_text:
+            md.append("```text")
+            md.extend(snippet_text.splitlines())
+            md.append("```")
+            md.append("")
+
+
+        meta_size_bytes = None
+        meta_used_tail_bytes = None
+        meta_reason = None
+        meta = _coerce_vcd_meta(ex.vcd_meta)
+        if meta and meta.get("truncated"):
+            md.append("**VCD read limits applied**")
+            md.append(f"- size_bytes: **{meta.get('size_bytes')}**")
+            if meta.get("used_tail_bytes"):
+                md.append(f"- used_tail_bytes: **{meta.get('used_tail_bytes')}**")
+            md.append(f"- reason: `{meta.get('reason')}`")
+            md.append("")
+
+        if ex.top_tail is not None:
+            md.append("**Top suspect signals (tail window)**")
+            if ex.top_tail:
+                for name, c in ex.top_tail:
+                    md.append(f"- `{name}` — **{c}**")
             else:
-                # fallback: mostra as primeiras linhas do log (ou as últimas)
-                if lines:
-                    snippet_text = "\n".join(lines[:6])
-
-            seeds = ", ".join(str(r.seed) for r in items[:30])
-            seeds_str = seeds + (" ..." if len(items) > 30 else "")
-
-            md.append(f"### {i}. {kind} :: {pattern}")
-            md.append(f"- count: **{len(items)}**")
-            md.append(f"- seeds: {seeds_str}")
-            md.append(f"- location: `{loc}`")
-            md.append(f"- message: `{msg}`")
-            if prefixes:
-                md.append(f"- scope_prefix: `{prefixes[0]}`")
+                md.append("_no signals in scope_")
             md.append("")
 
-            md.append("**Subclusters (by wave hash)**")
-            for j, (wh, subitems) in enumerate(subs.items(), start=1):
-                sub_seeds = ", ".join(str(r.seed) for r in subitems[:30])
-                md.append(f"- {j}. `{wh}` — count **{len(subitems)}**, seeds: {sub_seeds}{' ...' if len(subitems) > 30 else ''}")
+        if ex.top_total is not None:
+            md.append("**Top active signals (whole run)**")
+            if ex.top_total:
+                for name, c in ex.top_total:
+                    md.append(f"- `{name}` — **{c}**")
+            else:
+                md.append("_no signals in scope_")
             md.append("")
 
-            if snippet_text:
-                md.append("```text")
-                md.extend(snippet_text.splitlines())
-                md.append("```")
-                md.append("")
-
-            if ex.top_tail is not None:
-                md.append("**Top suspect signals (tail window)**")
-                if ex.top_tail:
-                    for name, c in ex.top_tail:
-                        md.append(f"- `{name}` — **{c}**")
-                else:
-                    md.append("_no signals in scope_")
-                md.append("")
-
-            if ex.top_total is not None:
-                md.append("**Top active signals (whole run)**")
-                if ex.top_total:
-                    for name, c in ex.top_total:
-                        md.append(f"- `{name}` — **{c}**")
-                else:
-                    md.append("_no signals in scope_")
-                md.append("")
-
-            # ---- html data ----
-            clusters_data.append(
-                {
-                    "kind": kind,
-                    "pattern": pattern,
-                    "location": loc,
-                    "message": msg,
-                    "count": len(items),
-                    "seeds": seeds_str,
-                    "example_seed": ex.seed,
-                    "snippet": snippet_text,
-                    "top_tail": ex.top_tail or [],
-                    "top_total": ex.top_total or [],
-                    "subclusters": [
-                        {
-                        "wave_hash": wh,
-                        "count": len(subitems),
-                        "seeds": ", ".join(str(r.seed) for r in subitems[:30]) + (" ..." if len(subitems) > 30 else ""),
-                        }
-                        for wh, subitems in subs.items()
-                    ]
-                }
-            )
+        # ---- html data ----
+        clusters_data.append(
+            {
+                "kind": kind,
+                "pattern": pattern,
+                "location": loc,
+                "message": msg,
+                "count": len(items),
+                "seeds": seeds_str,
+                "example_seed": ex.seed,
+                "snippet": snippet_text,
+                "top_tail": ex.top_tail or [],
+                "top_total": ex.top_total or [],
+                "subclusters": [
+                    {
+                    "wave_hash": wh,
+                    "count": len(subitems),
+                    "seeds": ", ".join(str(r.seed) for r in subitems[:30]) + (" ..." if len(subitems) > 30 else ""),
+                    }
+                    for wh, subitems in subs.items()
+                ]
+            }
+        )
     (out / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
     html = render_html_report(
@@ -835,18 +1021,13 @@ def analyze(
     (out / "report.html").write_text(html, encoding="utf-8")
 
     if json_out:
+
         payload = {
             "schema": "vtriage_report_v1",
             "artifact": str(artifact_dir),
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "knobs": {
-                "tail_event_window": params["tail_event_window"],
-                "top_n": params["top_n"],
-                "sketch_top_n": params["sketch_top_n"],
-                "prefix_levels": params["prefix_levels"],
-                "profile": (profile or None),
-            },
-            "summary": {"total": total, "passes": passes, "fails": fails},
+            "generated_at": index.get("generated_at") or datetime.now().isoformat(timespec="seconds"),
+            "knobs": index.get("knobs") or {},
+            "summary": index.get("summary") or {"total": total, "passes": passes, "fails": fails},
             "clusters": clusters_data,
         }
         (out / "report.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

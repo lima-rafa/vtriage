@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable
-from vtriage.vcd import vcd_top_suspects, vcd_wave_sketch_hash
+from vtriage.vcd import VcdReadMeta, vcd_top_suspects, vcd_wave_sketch_hash
 from rich.console import Console
 from datetime import datetime
 
@@ -54,7 +54,7 @@ _RE_WS = re.compile(r"\s+")
 def subcluster_by_wave_hash(items: list[CaseResult]) -> dict[str, list[CaseResult]]:
     out: dict[str, list[CaseResult]] = {}
     for r in items:
-        wh = r.wave_hash or "no_wave_hash"
+        wh = r.wave_hash if r.wave_hash else "no_wave_hash"
         out.setdefault(wh, []).append(r)
     # ordena por tamanho desc
     return dict(sorted(out.items(), key=lambda kv: len(kv[1]), reverse=True))
@@ -98,6 +98,11 @@ class CaseResult:
     top_total: list[tuple[str, int]] = field(default_factory=list)
     prefixes: list[str] = field(default_factory=list)
     wave_hash: str | None = None
+    wave_truncated: bool = False
+    wave_trunc_reason: str | None = None
+    wave_size_bytes: int | None = None
+    wave_tail_bytes_used: int | None = None
+    vcd_meta: VcdReadMeta | None = None
 
 DEBUG = os.environ.get("VTRIAGE_DEBUG", "").strip() not in ("", "0", "false", "False", "no", "NO")
 
@@ -109,12 +114,15 @@ def _waves_fingerprint(wave_path: Path) -> dict:
     st = wave_path.stat()
     return {"waves_mtime_ns": st.st_mtime_ns, "waves_size": st.st_size}
 
-def _knobs_dict(*, tail_event_window: int, top_n: int, sketch_top_n: int, prefix_levels: int) -> dict:
+def _knobs_dict(*, tail_event_window: int, top_n: int, sketch_top_n: int, prefix_levels: int, max_bytes: int, tail_bytes: int, max_events: int) -> dict:
     return {
         "tail_event_window": int(tail_event_window),
         "top_n": int(top_n),
         "sketch_top_n": int(sketch_top_n),
         "prefix_levels": int(prefix_levels),
+        "max_bytes": max_bytes,
+        "tail_bytes": tail_bytes,
+        "max_events": max_events,
     }
 
 def _cache_path(case_dir: Path) -> Path:
@@ -125,15 +133,61 @@ def _load_wave_cache(case_dir: Path) -> dict | None:
     if not cache_file.exists():
         return None
     try:
-        return json.loads(cache_file.read_text(encoding="utf-8"))
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        if data.get("schema") != "v1":
+            return None
+        if "knobs" in data and not isinstance(data["knobs"], dict):
+            return None
+
+        # normaliza listas do JSON -> tuplas (para o resto do código)
+        def _norm_pairs(x):
+            if not x:
+                return []
+            out = []
+            for it in x:
+                if isinstance(it, (list, tuple)) and len(it) == 2:
+                    out.append((str(it[0]), int(it[1])))
+            return out
+
+        data["top_tail"] = _norm_pairs(data.get("top_tail"))
+        data["top_total"] = _norm_pairs(data.get("top_total"))
+
+        # prefixes sempre list[str]
+        px = data.get("prefixes") or []
+        if isinstance(px, list):
+            data["prefixes"] = [str(p) for p in px if str(p).strip()]
+        else:
+            data["prefixes"] = []
+
+        # vcd_meta deve ser dict ou None
+        vm = data.get("vcd_meta")
+        data["vcd_meta"] = vm if isinstance(vm, dict) else None
+
+        return data
     except Exception:
         return None
 
 def _save_wave_cache(case_dir: Path, payload: dict) -> None:
-    cache_file = _cache_path(case_dir)  # <- CHAMA a função
-    _dbg(f"cache_file={cache_file}, type={type(cache_file)}")
+    cache_file = _cache_path(case_dir)
+
+    # JSON-friendly (tuplas -> listas)
+    def _pairs_to_lists(x):
+        if not x:
+            return []
+        out = []
+        for it in x:
+            if isinstance(it, (list, tuple)) and len(it) == 2:
+                out.append([str(it[0]), int(it[1])])
+        return out
+
+    safe = dict(payload)
+    safe["top_tail"] = _pairs_to_lists(payload.get("top_tail"))
+    safe["top_total"] = _pairs_to_lists(payload.get("top_total"))
+
     cache_file.write_text(
-        json.dumps(payload, indent=2, sort_keys=True),
+        json.dumps(safe, indent=2, sort_keys=True),
         encoding="utf-8",
     )
 
@@ -218,12 +272,16 @@ def analyze_run(
     top_n: int = 20,
     sketch_top_n: int = 12,
     prefix_levels: int = 2,
+    max_bytes: int = 200_000_000,
+    tail_bytes: int = 50_000_000,
+    max_events: int = 5_000_000,
 ) -> tuple[list[CaseResult], dict[str, list[CaseResult]]]:
     _dbg(f"analyzer.py loaded from: {__file__}")
     patterns = patterns or DEFAULT_PATTERNS
     results: list[CaseResult] = []
 
     for case_dir in collect_cases(run_dir):
+
         seed = _extract_seed(case_dir)
         log_path = case_dir / "log.txt"
         fail_path = case_dir / "fail.json"
@@ -237,6 +295,7 @@ def analyze_run(
         top_tail: list[tuple[str, int]] = []
         top_total: list[tuple[str, int]] = []
         prefixes: list[str] = []
+        case_vcd_meta = None
 
         hit = None
         sig = "PASS"
@@ -255,6 +314,9 @@ def analyze_run(
                     top_n=top_n,
                     sketch_top_n=sketch_top_n,
                     prefix_levels=prefix_levels,
+                    max_bytes=max_bytes,
+                    tail_bytes=tail_bytes,
+                    max_events=max_events,
                 )
 
                 # -----------------------
@@ -276,7 +338,18 @@ def analyze_run(
                         wave_hash = cached.get("wave_hash")
                         top_tail = cached.get("top_tail") or []
                         top_total = cached.get("top_total") or []
+
+                        meta_raw = cached.get("vcd_meta")
+                        if isinstance(meta_raw, dict):
+                            try:
+                                case_vcd_meta = VcdReadMeta(**meta_raw)
+                            except Exception:
+                                case_vcd_meta = None
+                        else:
+                            case_vcd_meta = None
+
                         used_cache = True
+
                 if used_cache:
                     _dbg(f"[cache] HIT  seed={seed:04d}")
                 else:
@@ -302,15 +375,38 @@ def analyze_run(
                             prefixes = expand_location_prefixes(loc2, levels=prefix_levels)
 
                     # wave hash (mesmo scope_prefixes)
+                    # wave hash (escopo -> fallback global) + meta
                     try:
-                        wave_hash = vcd_wave_sketch_hash(
+                        wave_hash, case_vcd_meta = vcd_wave_sketch_hash(
                             wave_path,
                             scope_prefixes=prefixes if prefixes else None,
                             tail_event_window=tail_event_window,
                             top_n=sketch_top_n,
+                            max_bytes=max_bytes,
+                            tail_bytes=tail_bytes,
+                            max_events=max_events,
                         )
                     except Exception:
-                        wave_hash = None
+                        wave_hash, case_vcd_meta = None, None
+
+                    # fallback global se o escopo estiver restrito demais
+                    if wave_hash is None and prefixes:
+                        try:
+                            wave_hash2, meta2 = vcd_wave_sketch_hash(
+                                wave_path,
+                                scope_prefixes=None,
+                                tail_event_window=tail_event_window,
+                                top_n=sketch_top_n,
+                                max_bytes=max_bytes,
+                                tail_bytes=tail_bytes,
+                                max_events=max_events,
+                            )
+                            if wave_hash is None:
+                                wave_hash = wave_hash2
+                            if case_vcd_meta is None:
+                                case_vcd_meta = meta2
+                        except Exception:
+                            pass
 
                     # suspects: filtrado -> fallback global
                     def _suspects(scope: list[str] | None):
@@ -319,24 +415,33 @@ def analyze_run(
                             tail_event_window=tail_event_window,
                             top_n=top_n,
                             scope_prefixes=scope,
+                            max_bytes=max_bytes,
+                            tail_bytes=tail_bytes,
+                            max_events=max_events,
                         )
 
                     if prefixes:
                         try:
-                            top_tail, top_total, _stats = _suspects(prefixes)
+                            top_tail, top_total, _stats, case_vcd_meta = _suspects(prefixes)
                         except Exception:
-                            top_tail, top_total = [], []
+                            top_tail, top_total, case_vcd_meta = [], [], None
 
                         if not top_tail:
                             try:
-                                top_tail, top_total, _stats = _suspects(None)
+                                top_tail, top_total, _stats, case_vcd_meta = _suspects(None)
                             except Exception:
-                                top_tail, top_total = [], []
+                                top_tail, top_total, case_vcd_meta = [], [], None
                     else:
                         try:
-                            top_tail, top_total, _stats = _suspects(None)
+                            top_tail, top_total, _stats, case_vcd_meta = _suspects(None)
                         except Exception:
-                            top_tail, top_total = [], []
+                            top_tail, top_total, case_vcd_meta = [], [], None
+
+                    if isinstance(case_vcd_meta, dict):
+                        try:
+                            case_vcd_meta = VcdReadMeta(**case_vcd_meta)
+                        except Exception:
+                            case_vcd_meta = None
 
                     # salva cache
                     try:
@@ -351,6 +456,7 @@ def analyze_run(
                                 "wave_hash": wave_hash,
                                 "top_tail": top_tail,
                                 "top_total": top_total,
+                                "vcd_meta": asdict(case_vcd_meta) if case_vcd_meta else None,
                             },
                         )
                     except Exception as e:
@@ -368,6 +474,7 @@ def analyze_run(
                 top_total=top_total,
                 prefixes=prefixes,
                 wave_hash=wave_hash,
+                vcd_meta=case_vcd_meta,
             )
         )
 
@@ -383,6 +490,9 @@ def analyze_run(
         top_n=top_n,
         sketch_top_n=sketch_top_n,
         prefix_levels=prefix_levels,
+        max_bytes=max_bytes,
+        tail_bytes=tail_bytes,
+        max_events=max_events,
     )
 
     try:
@@ -491,17 +601,6 @@ def expand_location_prefixes(loc: str | None, levels: int = 2) -> list[str] | No
             seen.add(p)
 
     return out or None
-def subcluster_by_wave_hash(items: list[CaseResult]) -> dict[str, list[CaseResult]]:
-    """
-    Dentro de um cluster (mesma signature), divide por wave_hash.
-    - Se wave_hash None, cai em bucket "no_wave_hash".
-    """
-    sub: dict[str, list[CaseResult]] = {}
-    for r in items:
-        key = r.wave_hash or "no_wave_hash"
-        sub.setdefault(key, []).append(r)
-    # ordena por tamanho desc
-    return dict(sorted(sub.items(), key=lambda kv: len(kv[1]), reverse=True))
 
 def _run_index_path(run_dir: Path) -> Path:
     return run_dir / "run_index.json"
@@ -520,25 +619,29 @@ def write_run_index(
     # seeds list
     seeds = []
     for r in results:
-        seeds.append(
-            {
-                "seed": r.seed,
-                "passed": r.passed,
-                "signature": r.signature,
-                "wave_hash": r.wave_hash,
-                "prefixes": r.prefixes or [],
-                "case_dir": str(r.case_dir),
-                "log": str(r.case_dir / "log.txt"),
-                "waves": str(r.case_dir / "waves.vcd"),
-            }
-        )
+        row = {
+            "seed": int(r.seed),
+            "passed": bool(r.passed),
+            "signature": str(r.signature),
+            "case_dir": str(r.case_dir),
+            "log": str(r.case_dir / "log.txt"),
+        }
+
+        # Só faz sentido guardar wave info para FAIL (no MVP)
+        if not r.passed:
+            row["prefixes"] = r.prefixes or []
+            row["wave_hash"] = r.wave_hash or "no_wave_hash"
+            row["waves"] = str(r.wave_path) if r.wave_path else None
+            row["vcd_meta"] = asdict(r.vcd_meta) if r.vcd_meta else None
+
+        seeds.append(row)
 
     # clusters summary + subclusters by wave_hash
     clusters_out = []
     for sig, items in clusters.items():
         wh_map: dict[str, list[int]] = {}
         for it in items:
-            wh = it.wave_hash or "-"
+            wh = it.wave_hash or "no_wave_hash"
             wh_map.setdefault(wh, []).append(it.seed)
         subclusters = [
             {"wave_hash": wh, "count": len(seeds_), "seeds": seeds_}
@@ -607,6 +710,18 @@ def load_run_index(run_dir: Path) -> dict | None:
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+    # sanity checks (harden)
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema") != "run_index_v1":
+        return None
+    if "knobs" not in data or "fingerprint" not in data or "summary" not in data:
+        return None
+    if "clusters" not in data or "seeds" not in data:
+        return None
+
+    return data

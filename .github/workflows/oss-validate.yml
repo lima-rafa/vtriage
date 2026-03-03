@@ -22,6 +22,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -92,6 +94,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -150,6 +154,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -162,7 +168,7 @@ jobs:
 
       - name: Install vtriage (editable)
         run: |
-          python -m pip install -U pip
+          python -m pip install -U pip wheel setuptools
           python -m pip install -e .
 
       - name: System deps (Java)
@@ -175,25 +181,31 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
 
+      - name: Cache coursier/sbt
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/.ivy2/cache
+            ~/.sbt
+          key: ${{ runner.os }}-sbt-${{ hashFiles('_oss/vexriscv/**/build.sbt', '_oss/vexriscv/**/project/**') }}
+          restore-keys: |
+            ${{ runner.os }}-sbt-
+
       # sbt: usamos o wrapper do próprio repo (se existir) ou instalamos sbt
-      - name: Install sbt (if needed)
+      - name: Install sbt-extras (robust)
         shell: bash
         run: |
-          if [ -f "_oss/vexriscv/sbt" ]; then
-            echo "sbt script exists in repo."
-          else
-            echo "Installing sbt..."
-            sudo apt-get install -y sbt || true
-          fi
+          curl -fsSL https://raw.githubusercontent.com/paulp/sbt-extras/master/sbt > /usr/local/bin/sbt
+          chmod +x /usr/local/bin/sbt
+          sbt --version || true
 
       - name: vtriage run (VexRiscv sbt smoke) -> analyze -> report (allow fail)
         shell: bash
         run: |
-          # Rodar um comando "leve" e real: compile/test do projeto
-          # (Se esse alvo mudar, a gente ajusta conforme o log do CI)
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc './sbt -no-colors compile'" \
+            --cmd "bash -lc 'cd _oss/vexriscv && sbt -no-colors compile'" \
             --workdir _oss/vexriscv \
             --artifact-root artifacts \
             --out report \

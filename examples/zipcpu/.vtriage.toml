@@ -30,6 +30,10 @@ tail_event_window = 50000
 top_n = 20
 prefix_expand_levels = 2
 sketch_top_n = 12
+max_bytes = 200000000      # 200 MB
+tail_bytes = 50000000      # 50 MB (se exceder max_bytes, ler só o final)
+max_events = 5000000       # 5 milhões de eventos (hard stop)
+
 
 [clustering]
 method = "dbscan"
@@ -53,8 +57,12 @@ workdir = "examples/zipcpu"
 [profiles.quick.waveform]
 tail_event_window = 50000
 top_n = 12
-sketch_top_n = 12
 prefix_expand_levels = 2
+max_bytes  = 200000000
+tail_bytes = 50000000
+max_events = 5000000
+[profiles.quick.report]
+include_top_signals = 12
 
 [profiles.full]
 seeds = 200
@@ -63,5 +71,7 @@ strict_waves = true
 [profiles.full.waveform]
 tail_event_window = 200000
 top_n = 30
-sketch_top_n = 12
 prefix_expand_levels = 3
+max_bytes  = 400000000
+tail_bytes = 100000000
+max_events = 8000000
