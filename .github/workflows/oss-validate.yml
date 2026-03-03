@@ -13,27 +13,16 @@ on:
           - litex
           - vexriscv
           - all
-      mode:
-        description: "What to run"
-        type: choice
-        required: true
-        default: "both"
-        options:
-          - smoke
-          - real
-          - both
-  # (opcional) agenda semanal — deixe comentado por enquanto
-  # schedule:
-  #   - cron: "0 3 * * 1"
 
 jobs:
-  # ---------------------------
-  # ZIPCPU — SMOKE
-  # ---------------------------
+  # -------------------------
+  # ZipCPU - SMOKE
+  # -------------------------
   zipcpu-smoke:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'smoke' || github.event.inputs.mode == 'both') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -49,23 +38,22 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e .
 
-      - name: System deps (Verilator + libs)
+      - name: System deps (basic)
         run: |
           sudo apt-get update
-          sudo apt-get install -y verilator g++ make libelf-dev libncurses-dev git
+          sudo apt-get install -y git
 
       - name: Clone ZipCPU
         run: |
           mkdir -p _oss
           git clone --depth 1 https://github.com/ZipCPU/zipcpu.git _oss/zipcpu
 
-      # Smoke: só valida que consegue "entrar" no repo e rodar algo bem curto.
       - name: vtriage run (ZipCPU smoke) -> analyze -> report (allow fail)
         shell: bash
         run: |
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'verilator --version && make -n rtl'" \
+            --cmd "bash -lc 'ls -la && git rev-parse --short HEAD && echo zipcpu-smoke-ok'" \
             --workdir _oss/zipcpu \
             --artifact-root artifacts \
             --out report \
@@ -85,13 +73,14 @@ jobs:
           name: zipcpu-smoke-artifacts
           path: artifacts/
 
-  # ---------------------------
-  # ZIPCPU — REAL BUILD/TEST
-  # ---------------------------
+  # -------------------------
+  # ZipCPU - REAL (build+tests)
+  # -------------------------
   zipcpu-real:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'real' || github.event.inputs.mode == 'both') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -142,13 +131,26 @@ jobs:
           name: zipcpu-real-artifacts
           path: artifacts/
 
-  # ---------------------------
-  # LITEX — SMOKE
-  # ---------------------------
+      - name: Debug (show last logs on failure)
+        if: failure()
+        shell: bash
+        run: |
+          echo "Latest artifacts dir:"
+          ls -la artifacts || true
+          latest=$(ls -1 artifacts | grep '^run_' | sort -r | head -n 1 || true)
+          echo "latest=$latest"
+          if [ -n "$latest" ]; then
+            find "artifacts/$latest/tests" -name log.txt -maxdepth 2 -print -exec tail -n 120 {} \; || true
+          fi
+
+  # -------------------------
+  # LiteX - SMOKE
+  # -------------------------
   litex-smoke:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'smoke' || github.event.inputs.mode == 'both') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -159,10 +161,9 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install vtriage (editable) + deps
+      - name: Install vtriage (editable)
         run: |
-          python -m pip install -U pip wheel setuptools
-          python -m pip install migen
+          python -m pip install -U pip
           python -m pip install -e .
 
       - name: Clone LiteX
@@ -170,8 +171,11 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/enjoy-digital/litex.git _oss/litex
 
-      - name: Install LiteX (editable)
+      - name: Install LiteX (editable) + deps
+        shell: bash
         run: |
+          python -m pip install -U wheel setuptools
+          python -m pip install migen
           python -m pip install -e _oss/litex
 
       - name: vtriage run (LiteX smoke import) -> analyze -> report (allow fail)
@@ -199,13 +203,14 @@ jobs:
           name: litex-smoke-artifacts
           path: artifacts/
 
-  # ---------------------------
-  # LITEX — REAL (leve, mas "real")
-  # ---------------------------
+  # -------------------------
+  # LiteX - REAL (tests)
+  # -------------------------
   litex-real:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'real' || github.event.inputs.mode == 'both') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -216,28 +221,35 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install vtriage (editable) + deps
+      - name: Install vtriage (editable)
         run: |
-          python -m pip install -U pip wheel setuptools
-          python -m pip install migen
+          python -m pip install -U pip
           python -m pip install -e .
+
+      - name: System deps (optional)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
 
       - name: Clone LiteX
         run: |
           mkdir -p _oss
           git clone --depth 1 https://github.com/enjoy-digital/litex.git _oss/litex
 
-      - name: Install LiteX (editable)
+      - name: Install LiteX + test deps
+        shell: bash
         run: |
+          python -m pip install -U wheel setuptools
+          python -m pip install migen
           python -m pip install -e _oss/litex
+          python -m pip install pytest
 
-      # Real: roda um comando de geração (não é full SoC build, mas é mais real que só import).
-      - name: vtriage run (LiteX real command) -> analyze -> report (allow fail)
+      - name: vtriage run (LiteX full tests) -> analyze -> report (allow fail)
         shell: bash
         run: |
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'python -m litex.soc.integration.soc_core --help >/dev/null && echo litex-real-ok'" \
+            --cmd "bash -lc 'python -m pytest -q'" \
             --workdir _oss/litex \
             --artifact-root artifacts \
             --out report \
@@ -257,13 +269,14 @@ jobs:
           name: litex-real-artifacts
           path: artifacts/
 
-  # ---------------------------
-  # VEXRISCV — SMOKE
-  # ---------------------------
+  # -------------------------
+  # VexRiscv - SMOKE
+  # -------------------------
   vexriscv-smoke:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'smoke' || github.event.inputs.mode == 'both') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -279,7 +292,7 @@ jobs:
           python -m pip install -U pip wheel setuptools
           python -m pip install -e .
 
-      - name: System deps (Java)
+      - name: System deps (Java + git)
         run: |
           sudo apt-get update
           sudo apt-get install -y default-jdk git
@@ -289,13 +302,23 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
 
-      - name: vtriage run (VexRiscv smoke) -> analyze -> report (allow fail)
+      - name: vtriage run (VexRiscv smoke compile) -> analyze -> report (allow fail)
         shell: bash
         run: |
+          cd _oss/vexriscv
+          if [ -f "./sbt" ]; then
+            chmod +x ./sbt
+            SBT_CMD="./sbt -no-colors"
+          else
+            sudo apt-get install -y sbt || true
+            SBT_CMD="sbt -no-colors"
+          fi
+          cd - >/dev/null
+
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'java -version && ls -la | head -n 20'" \
-            --workdir _oss/vexriscv \
+            --cmd "bash -lc 'cd _oss/vexriscv && $SBT_CMD compile'" \
+            --workdir . \
             --artifact-root artifacts \
             --out report \
             --no-analyze || true
@@ -314,13 +337,14 @@ jobs:
           name: vexriscv-smoke-artifacts
           path: artifacts/
 
-  # ---------------------------
-  # VEXRISCV — REAL (compile)
-  # ---------------------------
+  # -------------------------
+  # VexRiscv - REAL (tests + cache)
+  # -------------------------
   vexriscv-real:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') && (github.event.inputs.mode == 'real' || github.event.inputs.mode == 'both') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+
     steps:
       - name: Checkout vtriage
         uses: actions/checkout@v4
@@ -336,7 +360,7 @@ jobs:
           python -m pip install -U pip wheel setuptools
           python -m pip install -e .
 
-      - name: System deps (Java)
+      - name: System deps (Java + git)
         run: |
           sudo apt-get update
           sudo apt-get install -y default-jdk git
@@ -346,30 +370,32 @@ jobs:
           mkdir -p _oss
           git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
 
-      - name: Install sbt (if needed)
-        shell: bash
-        run: |
-          if [ -f "_oss/vexriscv/sbt" ]; then
-            echo "Using repo sbt script."
-            chmod +x _oss/vexriscv/sbt || true
-          else
-            echo "Installing sbt..."
-            sudo apt-get install -y sbt || true
-          fi
+      - name: Cache sbt/coursier/ivy
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/.sbt
+            ~/.ivy2/cache
+          key: ${{ runner.os }}-sbt-${{ hashFiles('_oss/vexriscv/**/build.sbt', '_oss/vexriscv/**/project/**', '_oss/vexriscv/**/build.properties') }}
 
-      - name: vtriage run (VexRiscv real compile) -> analyze -> report (allow fail)
+      - name: vtriage run (VexRiscv full tests) -> analyze -> report (allow fail)
         shell: bash
         run: |
+          cd _oss/vexriscv
           if [ -f "./sbt" ]; then
-            CMD="./sbt -no-colors compile"
+            chmod +x ./sbt
+            SBT_CMD="./sbt -no-colors"
           else
-            CMD="sbt -no-colors compile"
+            sudo apt-get install -y sbt || true
+            SBT_CMD="sbt -no-colors"
           fi
+          cd - >/dev/null
 
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc '$CMD'" \
-            --workdir _oss/vexriscv \
+            --cmd "bash -lc 'cd _oss/vexriscv && $SBT_CMD test'" \
+            --workdir . \
             --artifact-root artifacts \
             --out report \
             --no-analyze || true
