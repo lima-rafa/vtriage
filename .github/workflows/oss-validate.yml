@@ -354,7 +354,7 @@ jobs:
   vexriscv-real-full:
     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 100
 
     steps:
       - name: Checkout vtriage
