@@ -1034,16 +1034,37 @@ def analyze(
     (out / "report.html").write_text(html, encoding="utf-8")
 
     if json_out:
+        if index is not None:
+            generated_at = index.get("generated_at") or datetime.now().isoformat(timespec="seconds")
+            knobs_out = index.get("knobs") or {}
+            summary_out = index.get("summary") or {"total": total, "passes": passes, "fails": fails}
+        else:
+            generated_at = datetime.now().isoformat(timespec="seconds")
+            knobs_out = {
+                "tail_event_window": params["tail_event_window"],
+                "top_n": params["top_n"],
+                "sketch_top_n": params["sketch_top_n"],
+                "prefix_levels": params["prefix_levels"],
+                "max_bytes": params["max_bytes"],
+                "tail_bytes": params["tail_bytes"],
+                "max_events": params["max_events"],
+                "profile": (profile or None),
+            }
+            summary_out = {"total": total, "passes": passes, "fails": fails}
 
         payload = {
             "schema": "vtriage_report_v1",
             "artifact": str(artifact_dir),
-            "generated_at": index.get("generated_at") or datetime.now().isoformat(timespec="seconds"),
-            "knobs": index.get("knobs") or {},
-            "summary": index.get("summary") or {"total": total, "passes": passes, "fails": fails},
+            "generated_at": generated_at,
+            "knobs": knobs_out,
+            "summary": summary_out,
             "clusters": clusters_data,
         }
-        (out / "report.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        (out / "report.json").write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     print("[green]OK[/green] relatório gerado em", out)
 
