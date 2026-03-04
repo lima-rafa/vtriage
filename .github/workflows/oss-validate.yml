@@ -66,12 +66,14 @@ jobs:
         with:
           name: zipcpu-smoke-report
           path: report/
+          if-no-files-found: warn
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: zipcpu-smoke-artifacts
           path: artifacts/
+          if-no-files-found: warn
 
   # -------------------------
   # ZipCPU - REAL (build+tests)
@@ -124,12 +126,14 @@ jobs:
         with:
           name: zipcpu-real-full-report
           path: report/
+          if-no-files-found: warn
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: zipcpu-real-full-artifacts
           path: artifacts/
+          if-no-files-found: warn
 
       - name: Debug (show last logs on failure)
         if: failure()
@@ -196,12 +200,14 @@ jobs:
         with:
           name: litex-smoke-report
           path: report/
+          if-no-files-found: warn
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: litex-smoke-artifacts
           path: artifacts/
+          if-no-files-found: warn
 
   # -------------------------
   # LiteX - REAL (tests)
@@ -263,12 +269,14 @@ jobs:
         with:
           name: litex-real-full-report
           path: report/
+          if-no-files-found: warn
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: litex-real-full-artifacts
           path: artifacts/
+          if-no-files-found: warn
 
   # -------------------------
   # VexRiscv - SMOKE
@@ -331,12 +339,14 @@ jobs:
         with:
           name: vexriscv-smoke-report
           path: report/
+          if-no-files-found: warn
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: vexriscv-smoke-artifacts
           path: artifacts/
+          if-no-files-found: warn
 
   # -------------------------
   # VexRiscv - REAL (tests + cache)
@@ -364,7 +374,7 @@ jobs:
       - name: System deps (Java + Verilator + build tools)
         run: |
           sudo apt-get update
-          sudo apt-get install -y git make g++ verilator default-jdk curl gbd
+          sudo apt-get install -y git make g++ verilator default-jdk curl gdb
 
       - name: Clone VexRiscv
         run: |
