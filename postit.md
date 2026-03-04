@@ -290,117 +290,192 @@ git commit -m "ci: add vexriscv real job"
 git push
 --------------------------------------
 
-Pelo log do litex-real dá pra cravar duas coisas:
+name: oss-validate
 
-Sim: ele está “real” no sentido de executar algo do mundo real do projeto (pytest no repo LiteX) e instalar o LiteX de verdade.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target to validate"
+        type: choice
+        required: true
+        default: "zipcpu"
+        options:
+          - zipcpu
+          - litex
+          - vexriscv
+          - all
 
-Mas: ele não está “equivalente ao zipcpu-real em profundidade”, porque o comando python -m pytest -q terminou rápido demais e não mostrou nenhum resumo de testes.
-No seu log, ele apenas roda e segue (isso pode significar “0 tests ran” ou poucos testes). Para equivaler ao ZipCPU, você precisa de um build/test que realmente exercite geração/compilação/sim (idealmente Verilator/iverilog ou ao menos gerar um SoC e rodar algum build).
+jobs:
+  zipcpu-real-full:
+    if: ${{ github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
-Diagnóstico rápido do seu litex-real atual (com base no log)
+    steps:
+      - name: Checkout vtriage
+        uses: actions/checkout@v4
 
-Ele instala litex/migen ok.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
-Ele roda python -m pytest -q, mas o log do step não imprime o resultado do pytest (o vtriage run captura log em artifacts; o Actions não mostra a saída completa).
+      - name: Install vtriage (editable)
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
 
-O runtime total do job foi muito baixo, então é quase certo que não está fazendo build/test pesado.
+      - name: System deps (Verilator + build tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator g++ make libelf-dev libncurses-dev git
 
-I6: Como deixar LiteX e VexRiscv “real completo” (equivalente ao ZipCPU-real)
-Parte A — LiteX “real completo”
+      - name: Clone ZipCPU
+        run: |
+          mkdir -p _oss
+          git clone --depth 1 https://github.com/ZipCPU/zipcpu.git _oss/zipcpu
 
-Você tem 2 caminhos práticos. Eu recomendo fazer os dois em sequência (um “real-lite” e um “real-full”):
+      - name: vtriage run (ZipCPU REAL FULL) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
+          vtriage run \
+            --seeds 1 \
+            --cmd "bash -lc 'set -e; make rtl; make -C sim/verilator div_tb mpy_tb; ./sim/verilator/div_tb; ./sim/verilator/mpy_tb'" \
+            --workdir _oss/zipcpu \
+            --artifact-root artifacts \
+            --out report \
+            --no-analyze || true
 
-LiteX real-lite (confiável e rápido, mas já “de verdade”)
+          vtriage analyze --latest --out ./report --reuse-index
 
-Rodar um comando real do LiteX (gerar um SoC simples) e garantir que gera/verifica artefatos.
-Exemplo:
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zipcpu-real-full-report
+          path: report/
 
-python -m litex.soc.integration.soc_core (ou script de exemplo do repo)
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zipcpu-real-full-artifacts
+          path: artifacts/
 
-ou litex_boards (se disponível), mas pode puxar dependências extras.
+  litex-real-full:
+    if: ${{ github.event.inputs.target == 'litex' || github.event.inputs.target == 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
-LiteX real-full (mais próximo de zipcpu-real)
+    steps:
+      - name: Checkout vtriage
+        uses: actions/checkout@v4
 
-Instalar/verificar um toolchain de sim (ex.: verilator) e rodar um build que gere verilog + compile.
-Isso costuma ficar mais “chato” por causa de dependências (LiteX se integra com litex-boards, litedram, etc).
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
-✅ Melhor upgrade agora (sem explodir dependências):
+      - name: Install vtriage (editable)
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
 
-Em litex-real, antes do pytest, rode:
+      - name: System deps (git)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
 
-python -c "import litex; import litex.soc; print(litex.__version__ if hasattr(litex,'__version__') else 'no-version')"
+      - name: Clone LiteX
+        run: |
+          mkdir -p _oss
+          git clone --depth 1 https://github.com/enjoy-digital/litex.git _oss/litex
 
-depois rode um script do próprio repo (se existir) que gere algo (ex.: litex/tools/…).
+      - name: Install LiteX deps + LiteX (editable)
+        shell: bash
+        run: |
+          python -m pip install -U pip wheel setuptools
+          python -m pip install migen
+          python -m pip install -e _oss/litex
+          python -m pip install pytest
 
-E mude o pytest para mostrar se existem testes:
+      - name: vtriage run (LiteX REAL FULL = pytest suite) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
+          vtriage run \
+            --seeds 1 \
+            --cmd "bash -lc 'set -e; python -m pytest -q'" \
+            --workdir _oss/litex \
+            --artifact-root artifacts \
+            --out report \
+            --no-analyze || true
 
-python -m pytest -q || true
+          vtriage analyze --latest --out ./report --reuse-index
 
-e também python -m pytest -q --collect-only (pra confirmar se tem testes).
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: litex-real-full-report
+          path: report/
 
-🔧 O que você deve me enviar pra eu te dar o comando “full build/test” perfeito do LiteX:
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: litex-real-full-artifacts
+          path: artifacts/
 
-O output de:
+  vexriscv-real-full:
+    if: ${{ github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
-ls -la _oss/litex
+    steps:
+      - name: Checkout vtriage
+        uses: actions/checkout@v4
 
-find _oss/litex -maxdepth 3 -type f -name "test_*.py" -o -name "*_test.py"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
-python -c "import litex; import pkgutil; print('litex imported');"
+      - name: Install vtriage (editable)
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
 
-Com isso eu escolho o alvo certo que realmente faz build/test.
+      - name: System deps (Verilator + build tools + git)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git make g++ verilator
 
-Parte B — VexRiscv “real completo”
+      - name: Clone VexRiscv
+        run: |
+          mkdir -p _oss
+          git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
 
-O seu vexriscv-real roda sbt test. Isso já é equivalente ao ZipCPU-real em espírito (suite do projeto). O que falta para “subir o nível” é:
+      - name: vtriage run (VexRiscv REAL FULL = Verilator regression) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
+          vtriage run \
+            --seeds 1 \
+            --cmd "bash -lc 'set -e; cd src/test/cpp/regression; make clean run IBUS=SIMPLE DBUS=SIMPLE CSR=no MMU=no DEBUG_PLUGIN=no MUL=no DIV=no'" \
+            --workdir _oss/vexriscv \
+            --artifact-root artifacts \
+            --out report \
+            --no-analyze || true
 
-Garantir que está rodando o alvo certo (em alguns repos “test” pode ser vazio).
+          vtriage analyze --latest --out ./report --reuse-index
 
-Melhorar cache sbt/coursier (você já fez cache no real — ótimo).
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vexriscv-real-full-report
+          path: report/
 
-Opcional: rodar um target mais específico do projeto (se existir) que gere/compile o core.
-
-✅ Aqui, para confirmar “real completo”, você só precisa me mostrar no Actions:
-
-trecho do log do step sbt test com:
-
-quantos testes rodaram / tasks executadas (mesmo que sbt não diga “X tests”, ele lista tasks).
-
-O que faltou para concluirmos I6 (lista objetiva)
-I6.1 — LiteX: confirmar se pytest tem testes
-
-Rodar “collect-only” e/ou encontrar tests/ no repo.
-
-I6.2 — LiteX: trocar “litex-real” de pytest puro para um build/test que exercite geração/compilação
-
-Definir comando real (eu monto pra você assim que você mandar a estrutura do repo).
-
-I6.3 — VexRiscv: confirmar que sbt test executa algo real
-
-Se não executar, ajustar para o task correto (compile/test específico).
-
-I6.4 — Opcional: elevar ZipCPU-real (já é o mais pesado)
-
-Você pode acrescentar mais TBs/targets se quiser, mas não é obrigatório agora.
-
-Agora: o que você deve me mandar (pra eu te devolver o “LiteX real completo” exato)
-
-Manda só esses 3 outputs do job (pode ser local ou no Actions, tanto faz):
-
-Dentro do repo LiteX clonado:
-
-ls -la _oss/litex
-
-Procurar testes:
-
-find _oss/litex -maxdepth 3 -type f \( -name "test_*.py" -o -name "*_test.py" \) | head
-
-Confirmar import e listar “entrypoints”:
-
-python -c "import litex, pkgutil; print('litex ok'); print('submodules:', sum(1 for _ in pkgutil.walk_packages(litex.__path__, litex.__name__ + '.')))"
-
-Com isso eu:
-
-te devolvo o novo litex-real com build/test real completo (no padrão do ZipCPU-real),
-
-e, se precisar, ajusto também o litex-smoke (mas você disse que o smoke está ok).
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vexriscv-real-full-artifacts
+          path: artifacts/
