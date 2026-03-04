@@ -285,588 +285,122 @@ Q2 — Versionamento + release (opcional agora)
 Q2.1 tag v0.1.0
 
 Q2.2 changelog mínimo
-
+git add .github/workflows/oss-validate.yml
+git commit -m "ci: add vexriscv real job"
+git push
 --------------------------------------
-o que for referente ao load_run_index estará escrito "#import do load_run_index" ou "# uso do load_run_index"
-foi colocado todo o código do analyze() no estado atual dele
-os trexos com o uso do "vcd_meta" possui comentario na linha como "#ponto onde aparece vcd_meta" e ele está sendo atribuido a meta = ..."
-analyze.py:
-def load_run_index(run_dir: Path) -> dict | None:
-    p = _run_index_path(run_dir)
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-    # sanity checks (harden)
-    if not isinstance(data, dict):
-        return None
-    if data.get("schema") != "run_index_v1":
-        return None
-    if "knobs" not in data or "fingerprint" not in data or "summary" not in data:
-        return None
-    if "clusters" not in data or "seeds" not in data:
-        return None
-
-    return data
-
-def _run_index_path(run_dir: Path) -> Path:
-    return run_dir / "run_index.json"
-
-cli.py:
-
-from vtriage.analyzer import (
-    analyze_run,
-    _read_lines,
-    snippet,
-    extract_location_from_lines,
-    subcluster_by_wave_hash,
-    load_run_index, #import do load_run_index
-    run_fingerprint,
-    CaseResult,
-)
-
-@app.command()
-def analyze(
-    artifact_dir: Optional[Path] = typer.Argument(
-        None,
-        help="Diretório artifacts/run_... ou 'latest' (ou use --latest)",
-    ),
-    out: Path = typer.Option(Path("report"), "--out", "-o", help="Pasta de saída do relatório"),
-    lenient: bool = typer.Option(False, "--lenient", help="Mensagens mais amigáveis"),
-    strict_waves: bool = typer.Option(False, "--strict-waves", help="Falha se seed FAIL não tiver waves.vcd"),
-    latest: bool = typer.Option(False, "--latest", help="Usa o run_* mais recente de ./artifacts"),
-    profile: str = typer.Option("", "--profile", "-p", help="Profile do .vtriage.toml (ex: quick, full)"),
-    tail_event_window: Optional[int] = typer.Option(None, "--tail-event-window", help="Eventos do fim a considerar (ex: 50000)"),
-    top_n: Optional[int] = typer.Option(None, "--top-n", help="Top N sinais (suspects)"),
-    sketch_top_n: Optional[int] = typer.Option(None, "--sketch-top-n", help="Top N sinais para o hash/sketch"),
-    prefix_levels: Optional[int] = typer.Option(None, "--prefix-levels", help="Níveis de expansão de prefix (ex: 2,3)"),
-    reuse_index: bool = typer.Option(True, "--reuse-index/--no-reuse-index", help="Reusa run_index.json quando válido"),
-    rebuild_index: bool = typer.Option(False, "--rebuild-index", help="Ignora run_index.json e recalcula"),
-    debug: bool = typer.Option(False, "--debug", help="Mostra logs de debug (cache/index/etc.)"),
-    json_out: bool = typer.Option(False, "--json", help="Gera também report.json"),
-    max_bytes: Optional[int] = typer.Option(None, "--max-bytes", help="Limite p/ ler VCD inteiro (bytes)"),
-    tail_bytes: Optional[int] = typer.Option(None, "--tail-bytes", help="Se truncar, quantos bytes do fim ler"),
-    max_events: Optional[int] = typer.Option(None, "--max-events", help="Limite de eventos de valor no VCD"),
-):
-    out.mkdir(parents=True, exist_ok=True)
-
-    repo_root = Path(__file__).resolve().parents[2]
-    artifacts_root = repo_root / "artifacts"
-
-    arg = (str(artifact_dir).strip().lower() if artifact_dir is not None else "")
-    if latest or arg == "latest":
-        lr = resolve_latest_run(repo_root, artifacts_root)
-        if not lr:
-            _die(f"nenhuma pasta run_* encontrada em: {artifacts_root}")
-        artifact_dir = lr
-
-    # Fonte única: resolve latest/alias + valida "cara de run"
-    artifact_dir = _validate_artifact_dir_or_die(
-        artifact_dir,
-        repo_root=repo_root,
-        artifacts_root=artifacts_root,
-        lenient=lenient,
-        latest=latest,
-    )
-
-    # Validação do contrato do artifact (logs + opcional waves)
-    validate_artifact_dir(
-        artifact_dir,
-        strict=(not lenient),
-        strict_waves=strict_waves,  # <- só se você implementar isso no validate_artifact_dir
-    )
-
-    cfg_path = repo_root / ".vtriage.toml"
-    cfg = VtriageConfig.load(repo_root=repo_root, cfg_path=cfg_path)
-
-    params = cfg.effective_analyze_params(profile=profile or None)
-
-    if tail_event_window is not None:
-        params["tail_event_window"] = int(tail_event_window)
-    if top_n is not None:
-        params["top_n"] = int(top_n)
-    if sketch_top_n is not None:
-        params["sketch_top_n"] = int(sketch_top_n)
-    if prefix_levels is not None:
-        params["prefix_levels"] = int(prefix_levels)
-    if max_bytes is not None:
-        params["max_bytes"] = int(max_bytes)
-    if tail_bytes is not None:
-        params["tail_bytes"] = int(tail_bytes)
-    if max_events is not None:
-        params["max_events"] = int(max_events)
-
-    print(
-        f"analyze params: tail={params['tail_event_window']} "
-        f"top_n={params['top_n']} sketch_top_n={params['sketch_top_n']} "
-        f"prefix_levels={params['prefix_levels']} "
-        f"max_bytes={params['max_bytes']} tail_bytes={params['tail_bytes']} max_events={params['max_events']}"
-    )
-
-    index = None
-    if debug:
-        print("[debug] reuse_index=", reuse_index, "rebuild_index=", rebuild_index)
-        print("[debug] index_loaded=", bool(index))
-
-    if reuse_index and (not rebuild_index):
-        idx = load_run_index(artifact_dir) #uso do load_run_index
-        if idx and idx.get("schema") == "run_index_v1":
-            same_knobs = (idx.get("knobs") == _knobs_now(params))
-            if same_knobs:
-                current_fp = run_fingerprint(artifact_dir)
-                if idx.get("fingerprint") == current_fp:
-                    index = idx
-                    if index:
-                        if debug:
-                            print("[debug] index: reuse run_index.json")
-                            print("[debug] index: report from run_index.json (no re-analyze)")
-                        else:
-                            print("index: reuse run_index.json")
-                            print("index: report from run_index.json (no re-analyze)")
-                else:
-                    print("[yellow]index[/yellow]: fingerprint changed -> rebuild")
-            else:
-                print("[yellow]index[/yellow]: knobs changed -> rebuild")
-    results = None
-    clusters = None
-    clusters_data = []
-    if index is not None:
-        # constrói results/clusters mínimos a partir do index
-
-        summary = index.get("summary") or {}
-        total = int(summary.get("total", 0))
-        passes = int(summary.get("passes", 0))
-        fails = int(summary.get("fails", 0))
-
-        clusters_data = []
-
-        # 1) Monta clusters_data “cru” a partir do index
-        for cidx in (index.get("clusters") or []):
-            kind, pattern, location, msg = _split_signature(cidx.get("signature", ""))
-
-            seeds_list = cidx.get("seeds") or []
-            seeds_str = ", ".join(str(s) for s in seeds_list[:30]) + (" ..." if len(seeds_list) > 30 else "")
-            example_seed = int(seeds_list[0]) if seeds_list else None
-
-            subclusters = []
-            for sc in (cidx.get("subclusters") or []):
-                wh = sc.get("wave_hash")
-                if (wh is None) or (str(wh).strip() in ("", "-", "None")):
-                    wh = "no_wave_hash"
-                subclusters.append({
-                    "wave_hash": wh,
-                    "count": int(sc.get("count", 0)),
-                    "seeds": ", ".join(str(s) for s in (sc.get("seeds") or [])[:30]) +
-                            (" ..." if len((sc.get("seeds") or [])) > 30 else ""),
-                })
-
-            clusters_data.append({
-                "kind": kind,
-                "pattern": pattern,
-                "location": location,
-                "message": msg,
-                "count": int(cidx.get("count", len(seeds_list))),
-                "seeds": seeds_str,
-                "example_seed": example_seed,
-                "snippet": "",
-                "top_tail": [],
-                "top_total": [],
-                "prefixes": [],
-                "subclusters": subclusters,
-                "vcd_meta": None,
-            })
-
-        # 2) Enriquecer clusters_data a partir de index["seeds"] + wave_cache.json + log
-        seed_rows = index.get("seeds") or []
-        seed_map = {int(s["seed"]): s for s in seed_rows if "seed" in s}
-
-        for c in clusters_data:
-            ex_seed = c.get("example_seed")
-            if ex_seed is None:
-                continue
-
-            srow = seed_map.get(int(ex_seed))
-            if not srow:
-                continue
-
-            case_dir = Path(srow["case_dir"])
-            log_path = Path(srow.get("log") or (case_dir / "log.txt"))
-
-            # snippet
-            lines = _read_text_safe(log_path, limit=200)
-            if lines:
-                c["snippet"] = "\n".join(lines[:10])
-
-            # prefixes (preferir o do seed row)
-            c["prefixes"] = srow.get("prefixes") or []
-
-            # vcd_meta (se veio no index)
-            c["vcd_meta"] = srow.get("vcd_meta")
-
-            # top signals via wave_cache.json (se existir)
-            wc = _load_wave_cache_json(case_dir)
-            if wc:
-                c["top_tail"] = wc.get("top_tail") or []
-                c["top_total"] = wc.get("top_total") or []
-                if not c["prefixes"]:
-                    c["prefixes"] = wc.get("prefixes") or []
-
-
-        # --- gera MD/HTML/JSON e encerra ---
-        md = []
-        md.append("# vtriage report")
-        md.append("")
-        md.append(f"Artifact: `{artifact_dir}`")
-        md.append("")
-        md.append(f"- Total: **{total}**")
-        md.append(f"- PASS: **{passes}**")
-        md.append(f"- FAIL: **{fails}**")
-        md.append("")
-        md.append("## Clusters (by signature)")
-        md.append("")
-
-        if not clusters_data:
-            md.append("_No failures detected._")
-        else:
-            for i, c in enumerate(clusters_data, start=1):
-                md.append(f"### {i}. {c['kind']} :: {c['pattern']}")
-                md.append(f"- count: **{c['count']}**")
-                md.append(f"- seeds: {c['seeds']}")
-                md.append(f"- location: `{c['location']}`")
-                md.append(f"- message: `{c['message']}`")
-                md.append("")
-
-                # scope_prefix
-                prefixes = c.get("prefixes") or []
-                if prefixes:
-                    md.append(f"- scope_prefix: `{prefixes[0]}`")
-                md.append("")
-
-                if c.get("subclusters"):
-                    md.append("**Subclusters (by wave hash)**")
-                    for j, sc in enumerate(c["subclusters"], start=1):
-                        wh = sc.get("wave_hash") or "no_hash"
-                        md.append(f"- {j}. `{wh}` — count **{sc['count']}**, seeds: {sc['seeds']}")
-                    md.append("")
-
-                # snippet
-                if c.get("snippet"):
-                    md.append("```text")
-                    md.extend(c["snippet"].splitlines())
-                    md.append("```")
-                    md.append("")
-
-
-                # vcd meta (se truncou)
-                meta = c.get("vcd_meta") #ponto onde aparece meta = ...
-                if meta and meta.get("truncated"):
-                    md.append("**VCD read limits applied**")
-                    md.append(f"- size_bytes: **{meta.get('size_bytes')}**")
-                    if meta.get("used_tail_bytes"):
-                        md.append(f"- used_tail_bytes: **{meta.get('used_tail_bytes')}**")
-                    md.append(f"- reason: `{meta.get('reason')}`")
-                    md.append("")
-
-
-                    # top signals
-                    top_tail = c.get("top_tail") or []
-                    top_total = c.get("top_total") or []
-
-                    md.append("**Top suspect signals (tail window)**")
-                    if top_tail:
-                        for name, cnt in top_tail[:20]:
-                            md.append(f"- `{name}` — **{cnt}**")
-                    else:
-                        md.append("_no signals in scope_")
-                    md.append("")
-
-                    md.append("**Top active signals (whole run)**")
-                    if top_total:
-                        for name, cnt in top_total[:20]:
-                            md.append(f"- `{name}` — **{cnt}**")
-                    else:
-                        md.append("_no signals in scope_")
-                    md.append("")
-
-        (out / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
-
-        html = render_html_report(
-            artifact=str(artifact_dir),
-            generated_at=index.get("generated_at") or datetime.now().isoformat(timespec="seconds"),
-            total=total,
-            passes=passes,
-            fails=fails,
-            clusters=clusters_data,
-        )
-        (out / "report.html").write_text(html, encoding="utf-8")
-
-        if json_out:
-            (out / "report.json").write_text(
-                json.dumps(index, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-
-        print("[green]OK[/green] relatório gerado em", out)
-        return
-
-
-    else:
-        # ---------- REBUILD ----------
-        results, clusters = analyze_run(
-            artifact_dir,
-            tail_event_window=params["tail_event_window"],
-            top_n=params["top_n"],
-            sketch_top_n=params["sketch_top_n"],
-            prefix_levels=params["prefix_levels"],
-            max_bytes=params["max_bytes"],
-            tail_bytes=params["tail_bytes"],
-            max_events=params["max_events"],
-        )
-        # strict waves só faz sentido aqui porque temos results
-        if strict_waves:
-            missing = [
-                r.seed for r in results
-                if (not r.passed) and not (r.case_dir / "waves.vcd").exists()
-            ]
-            if missing:
-                missing_str = ", ".join(str(s) for s in missing[:30]) + (" ..." if len(missing) > 30 else "")
-                print("[red]error[/red]: strict-waves: faltando waves.vcd em seeds FAIL:", missing_str)
-                raise typer.Exit(code=3)
-
-        total = len(results)
-        fails = sum(1 for r in results if not r.passed)
-        passes = total - fails
-
-    md: list[str] = []
-    md.append("# vtriage report")
-    md.append("")
-    md.append(f"Artifact: `{artifact_dir}`")
-    md.append("")
-    md.append(f"- Total: **{total}**")
-    md.append(f"- PASS: **{passes}**")
-    md.append(f"- FAIL: **{fails}**")
-    md.append("")
-    md.append("## Clusters (by signature)")
-    md.append("")
-
-
-    if index is not None:
-        if not clusters_data:
-            md.append("_No failures detected._")
-        else:
-            for i, c in enumerate(clusters_data, start=1):
-                md.append(f"### {i}. {c['kind']} :: {c['pattern']}")
-                md.append(f"- count: **{c['count']}**")
-                md.append(f"- seeds: {c['seeds']}")
-                md.append(f"- location: `{c['location']}`")
-                md.append(f"- message: `{c['message']}`")
-                md.append("")
-                if c.get("subclusters"):
-                    md.append("**Subclusters (by wave hash)**")
-                    for j, sc in enumerate(c["subclusters"], start=1):
-                        md.append(f"- {j}. `{sc['wave_hash']}` — count **{sc['count']}**, seeds: {sc['seeds']}")
-                    md.append("")
-    else:
-        for i, (sig, items) in enumerate(clusters.items(), start=1):
-            kind, pattern, location, msg = _split_signature(sig)
-            subs = subcluster_by_wave_hash(items)
-
-            ex = items[0]
-            meta = ex.vcd_meta
-            lines = _read_lines(ex.case_dir / "log.txt")
-
-            loc = location
-            if loc == "-" or not loc:
-                loc = extract_location_from_lines(lines) or "-"
-
-            prefixes = ex.prefixes or []
-
-            snippet_text = ""
-            if ex.hit:
-                snippet_text = "\n".join(snippet(lines, ex.hit.line_no))
-            else:
-                # fallback: mostra as primeiras linhas do log (ou as últimas)
-                if lines:
-                    snippet_text = "\n".join(lines[:6])
-
-            seeds = ", ".join(str(r.seed) for r in items[:30])
-            seeds_str = seeds + (" ..." if len(items) > 30 else "")
-
-            md.append(f"### {i}. {kind} :: {pattern}")
-            md.append(f"- count: **{len(items)}**")
-            md.append(f"- seeds: {seeds_str}")
-            md.append(f"- location: `{loc}`")
-            md.append(f"- message: `{msg}`")
-
-            if prefixes:
-                md.append(f"- scope_prefix: `{prefixes[0]}`")
-            md.append("")
-
-            md.append("**Subclusters (by wave hash)**")
-            for j, (wh, subitems) in enumerate(subs.items(), start=1):
-                sub_seeds = ", ".join(str(r.seed) for r in subitems[:30])
-                md.append(f"- {j}. `{wh}` — count **{len(subitems)}**, seeds: {sub_seeds}{' ...' if len(subitems) > 30 else ''}")
-            md.append("")
-
-            if snippet_text:
-                md.append("```text")
-                md.extend(snippet_text.splitlines())
-                md.append("```")
-                md.append("")
-
-            meta_truncated = False
-            meta_size_bytes = None
-            meta_used_tail_bytes = None
-            meta_reason = None
-
-            if isinstance(meta, dict):
-                meta_truncated = bool(meta.get("truncated"))
-                meta_size_bytes = meta.get("size_bytes")
-                meta_used_tail_bytes = meta.get("used_tail_bytes")
-                meta_reason = meta.get("reason")
-            elif meta is not None:
-                meta_truncated = bool(getattr(meta, "truncated", False))
-                meta_size_bytes = getattr(meta, "size_bytes", None)
-                meta_used_tail_bytes = getattr(meta, "used_tail_bytes", None)
-                meta_reason = getattr(meta, "reason", None)
-
-            if meta_truncated:
-                md.append("**VCD read limits applied**")
-                md.append(f"- size_bytes: **{meta_size_bytes}**")
-                if meta_used_tail_bytes:
-                    md.append(f"- used_tail_bytes: **{meta_used_tail_bytes}**")
-                md.append(f"- reason: `{meta_reason}`")
-                md.append("")
-
-            if ex.top_tail is not None:
-                md.append("**Top suspect signals (tail window)**")
-                if ex.top_tail:
-                    for name, c in ex.top_tail:
-                        md.append(f"- `{name}` — **{c}**")
-                else:
-                    md.append("_no signals in scope_")
-                md.append("")
-
-            if ex.top_total is not None:
-                md.append("**Top active signals (whole run)**")
-                if ex.top_total:
-                    for name, c in ex.top_total:
-                        md.append(f"- `{name}` — **{c}**")
-                else:
-                    md.append("_no signals in scope_")
-                md.append("")
-
-            # ---- html data ----
-            clusters_data.append(
-                {
-                    "kind": kind,
-                    "pattern": pattern,
-                    "location": loc,
-                    "message": msg,
-                    "count": len(items),
-                    "seeds": seeds_str,
-                    "example_seed": ex.seed,
-                    "snippet": snippet_text,
-                    "top_tail": ex.top_tail or [],
-                    "top_total": ex.top_total or [],
-                    "subclusters": [
-                        {
-                        "wave_hash": wh,
-                        "count": len(subitems),
-                        "seeds": ", ".join(str(r.seed) for r in subitems[:30]) + (" ..." if len(subitems) > 30 else ""),
-                        }
-                        for wh, subitems in subs.items()
-                    ]
-                }
-            )
-    (out / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
-
-    html = render_html_report(
-        artifact=str(artifact_dir),
-        generated_at=datetime.now().isoformat(timespec="seconds"),
-        total=total,
-        passes=passes,
-        fails=fails,
-        clusters=clusters_data,
-    )
-    (out / "report.html").write_text(html, encoding="utf-8")
-
-    if json_out:
-
-        payload = {
-            "schema": "vtriage_report_v1",
-            "artifact": str(artifact_dir),
-            "generated_at": index.get("generated_at") or datetime.now().isoformat(timespec="seconds"),
-            "knobs": index.get("knobs") or {},
-            "summary": index.get("summary") or {"total": total, "passes": passes, "fails": fails},
-            "clusters": clusters_data,
-        }
-        (out / "report.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    print("[green]OK[/green] relatório gerado em", out)
-
-
-@app.command("show-run")
-def show_run(
-    run: Optional[Path] = typer.Argument(
-        None,
-        help="Run (path, nome run_..., ou 'latest'). Se omitido, usa latest.",
-    ),
-    latest: bool = typer.Option(False, "--latest", help="Usa o run_* mais recente"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Quantos clusters mostrar"),
-    as_json: bool = typer.Option(False, "--json", help="Imprime o run_index.json completo"),
-):
-    """Mostra resumo de um run usando run_index.json (se existir)."""
-    repo_root = Path(__file__).resolve().parents[2]
-    artifacts_root = repo_root / "artifacts"
-
-    run_dir = _resolve_run_arg(repo_root=repo_root, artifacts_root=artifacts_root, run=run, latest=latest)
-    if not run_dir:
-        run_dir = resolve_latest_run(repo_root, artifacts_root)
-
-    if not run_dir or not run_dir.exists():
-        _die("run não encontrado. use: vtriage list-runs")
-
-    idx = load_run_index(run_dir) #uso do load_run_index
-    if not idx:
-        _die(f"run_index.json não encontrado em {run_dir}\nrode: vtriage analyze \"{run_dir}\"")
-
-    if as_json:
-        print(json.dumps(idx, indent=2, sort_keys=True))
-        raise typer.Exit(code=0)
-
-    summary = idx.get("summary") or {}
-    knobs = idx.get("knobs") or {}
-    gen = idx.get("generated_at") or "-"
-
-    print(f"[cyan]run[/cyan]: {run_dir}")
-    print(f"[cyan]generated_at[/cyan]: {gen}")
-    print(f"[cyan]knobs[/cyan]: tail={knobs.get('tail_event_window')} top_n={knobs.get('top_n')} sketch_top_n={knobs.get('sketch_top_n')} prefix_levels={knobs.get('prefix_levels')}")
-    print(f"[cyan]summary[/cyan]: total={summary.get('total')} pass={summary.get('passes')} fail={summary.get('fails')}")
-    print("")
-
-    clusters = idx.get("clusters") or []
-    if not clusters:
-        print("[green]ok[/green]: no clusters")
-        raise typer.Exit(code=0)
-
-    limit = max(1, int(limit))
-    print(f"[bold]Top clusters (limit={limit})[/bold]")
-    for i, c in enumerate(clusters[:limit], start=1):
-        sig = c.get("signature", "-")
-        count = c.get("count", 0)
-        seeds = c.get("seeds", [])
-        seeds_str = ", ".join(str(s) for s in seeds[:15]) + (" ..." if len(seeds) > 15 else "")
-        print(f"{i:02d}. count={count}  seeds={seeds_str}")
-        print(f"    sig: {sig}")
-
-        subs = c.get("subclusters") or []
-        if subs:
-            top_sub = subs[0]
-            wh = top_sub.get("wave_hash", "-")
-            sc = top_sub.get("count", 0)
-            print(f"    top subcluster: {wh} (count={sc})")
-        print("")
+
+Pelo log do litex-real dá pra cravar duas coisas:
+
+Sim: ele está “real” no sentido de executar algo do mundo real do projeto (pytest no repo LiteX) e instalar o LiteX de verdade.
+
+Mas: ele não está “equivalente ao zipcpu-real em profundidade”, porque o comando python -m pytest -q terminou rápido demais e não mostrou nenhum resumo de testes.
+No seu log, ele apenas roda e segue (isso pode significar “0 tests ran” ou poucos testes). Para equivaler ao ZipCPU, você precisa de um build/test que realmente exercite geração/compilação/sim (idealmente Verilator/iverilog ou ao menos gerar um SoC e rodar algum build).
+
+Diagnóstico rápido do seu litex-real atual (com base no log)
+
+Ele instala litex/migen ok.
+
+Ele roda python -m pytest -q, mas o log do step não imprime o resultado do pytest (o vtriage run captura log em artifacts; o Actions não mostra a saída completa).
+
+O runtime total do job foi muito baixo, então é quase certo que não está fazendo build/test pesado.
+
+I6: Como deixar LiteX e VexRiscv “real completo” (equivalente ao ZipCPU-real)
+Parte A — LiteX “real completo”
+
+Você tem 2 caminhos práticos. Eu recomendo fazer os dois em sequência (um “real-lite” e um “real-full”):
+
+LiteX real-lite (confiável e rápido, mas já “de verdade”)
+
+Rodar um comando real do LiteX (gerar um SoC simples) e garantir que gera/verifica artefatos.
+Exemplo:
+
+python -m litex.soc.integration.soc_core (ou script de exemplo do repo)
+
+ou litex_boards (se disponível), mas pode puxar dependências extras.
+
+LiteX real-full (mais próximo de zipcpu-real)
+
+Instalar/verificar um toolchain de sim (ex.: verilator) e rodar um build que gere verilog + compile.
+Isso costuma ficar mais “chato” por causa de dependências (LiteX se integra com litex-boards, litedram, etc).
+
+✅ Melhor upgrade agora (sem explodir dependências):
+
+Em litex-real, antes do pytest, rode:
+
+python -c "import litex; import litex.soc; print(litex.__version__ if hasattr(litex,'__version__') else 'no-version')"
+
+depois rode um script do próprio repo (se existir) que gere algo (ex.: litex/tools/…).
+
+E mude o pytest para mostrar se existem testes:
+
+python -m pytest -q || true
+
+e também python -m pytest -q --collect-only (pra confirmar se tem testes).
+
+🔧 O que você deve me enviar pra eu te dar o comando “full build/test” perfeito do LiteX:
+
+O output de:
+
+ls -la _oss/litex
+
+find _oss/litex -maxdepth 3 -type f -name "test_*.py" -o -name "*_test.py"
+
+python -c "import litex; import pkgutil; print('litex imported');"
+
+Com isso eu escolho o alvo certo que realmente faz build/test.
+
+Parte B — VexRiscv “real completo”
+
+O seu vexriscv-real roda sbt test. Isso já é equivalente ao ZipCPU-real em espírito (suite do projeto). O que falta para “subir o nível” é:
+
+Garantir que está rodando o alvo certo (em alguns repos “test” pode ser vazio).
+
+Melhorar cache sbt/coursier (você já fez cache no real — ótimo).
+
+Opcional: rodar um target mais específico do projeto (se existir) que gere/compile o core.
+
+✅ Aqui, para confirmar “real completo”, você só precisa me mostrar no Actions:
+
+trecho do log do step sbt test com:
+
+quantos testes rodaram / tasks executadas (mesmo que sbt não diga “X tests”, ele lista tasks).
+
+O que faltou para concluirmos I6 (lista objetiva)
+I6.1 — LiteX: confirmar se pytest tem testes
+
+Rodar “collect-only” e/ou encontrar tests/ no repo.
+
+I6.2 — LiteX: trocar “litex-real” de pytest puro para um build/test que exercite geração/compilação
+
+Definir comando real (eu monto pra você assim que você mandar a estrutura do repo).
+
+I6.3 — VexRiscv: confirmar que sbt test executa algo real
+
+Se não executar, ajustar para o task correto (compile/test específico).
+
+I6.4 — Opcional: elevar ZipCPU-real (já é o mais pesado)
+
+Você pode acrescentar mais TBs/targets se quiser, mas não é obrigatório agora.
+
+Agora: o que você deve me mandar (pra eu te devolver o “LiteX real completo” exato)
+
+Manda só esses 3 outputs do job (pode ser local ou no Actions, tanto faz):
+
+Dentro do repo LiteX clonado:
+
+ls -la _oss/litex
+
+Procurar testes:
+
+find _oss/litex -maxdepth 3 -type f \( -name "test_*.py" -o -name "*_test.py" \) | head
+
+Confirmar import e listar “entrypoints”:
+
+python -c "import litex, pkgutil; print('litex ok'); print('submodules:', sum(1 for _ in pkgutil.walk_packages(litex.__path__, litex.__name__ + '.')))"
+
+Com isso eu:
+
+te devolvo o novo litex-real com build/test real completo (no padrão do ZipCPU-real),
+
+e, se precisar, ajusto também o litex-smoke (mas você disse que o smoke está ok).

@@ -244,9 +244,13 @@ jobs:
           python -m pip install -e _oss/litex
           python -m pip install pytest
 
+
       - name: vtriage run (LiteX full tests) -> analyze -> report (allow fail)
         shell: bash
         run: |
+          ls -la _oss/litex
+          find _oss/litex -maxdepth 3 -type f \( -name "test_*.py" -o -name "*_test.py" \) | head
+          python -c "import litex, pkgutil; print('litex ok'); print('submodules:', sum(1 for _ in pkgutil.walk_packages(litex.__path__, litex.__name__ + '.')))"
           vtriage run \
             --seeds 1 \
             --cmd "bash -lc 'python -m pytest -q'" \
