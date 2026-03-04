@@ -206,7 +206,7 @@ jobs:
   # -------------------------
   # LiteX - REAL (tests)
   # -------------------------
-  litex-real:
+  litex-real-full:
     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'litex' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -239,18 +239,18 @@ jobs:
       - name: Install LiteX + test deps
         shell: bash
         run: |
-          python -m pip install -U wheel setuptools
+          python -m pip install -U pip wheel setuptools
           python -m pip install migen
           python -m pip install -e _oss/litex
           python -m pip install pytest
 
 
-      - name: vtriage run (LiteX real tests) -> analyze -> report (allow fail)
+      - name: vtriage run (LiteX REAL FULL = pytest) -> analyze -> report (allow fail)
         shell: bash
         run: |
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'set -e; python -m pytest -q test || true; python -m pytest -q test --maxfail=1 -ra'" \
+            --cmd "bash -lc 'set -e; python -m pytest -q'" \
             --workdir _oss/litex \
             --artifact-root artifacts \
             --out report \
@@ -261,13 +261,13 @@ jobs:
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: litex-real-report
+          name: litex-real-full-report
           path: report/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: litex-real-artifacts
+          name: litex-real-full-artifacts
           path: artifacts/
 
   # -------------------------
@@ -341,7 +341,7 @@ jobs:
   # -------------------------
   # VexRiscv - REAL (tests + cache)
   # -------------------------
-  vexriscv-real:
+  vexriscv-real-full:
     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -361,42 +361,57 @@ jobs:
           python -m pip install -U pip wheel setuptools
           python -m pip install -e .
 
-      - name: System deps (Java + git)
+      - name: System deps (Java + Verilator + build tools)
         run: |
           sudo apt-get update
-          sudo apt-get install -y default-jdk git
-          sudo apt-get install -y git make g++ verilator
+          sudo apt-get install -y git make g++ verilator default-jdk curl
 
       - name: Clone VexRiscv
         run: |
           mkdir -p _oss
           git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
 
-      - name: Cache sbt/coursier/ivy
+      - name: Cache coursier/sbt
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/coursier
-            ~/.sbt
-            ~/.ivy2/cache
-          key: ${{ runner.os }}-sbt-${{ hashFiles('_oss/vexriscv/**/build.sbt', '_oss/vexriscv/**/project/**', '_oss/vexriscv/**/build.properties') }}
+            ~/.local/share/coursier
+          key: ${{ runner.os }}-coursier-${{ hashFiles('_oss/vexriscv/**/build.sbt', '_oss/vexriscv/**/project/**', '_oss/vexriscv/**/build.properties') }}
 
-      - name: vtriage run (VexRiscv full tests) -> analyze -> report (allow fail)
+      - name: Install sbt via coursier (robust)
+        shell: bash
+        run: |
+          set -e
+          if ! command -v cs >/dev/null 2>&1; then
+            curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz -o cs.gz
+            gunzip -f cs.gz
+            chmod +x cs
+            sudo mv cs /usr/local/bin/cs
+          fi
+          cs setup --yes
+          cs install sbt
+          echo "$HOME/.local/share/coursier/bin" >> $GITHUB_PATH
+
+      - name: VexRiscv Scala build (compile + test)
         shell: bash
         run: |
           cd _oss/vexriscv
-          if [ -f "./sbt" ]; then
-            chmod +x ./sbt
-            SBT_CMD="./sbt -no-colors"
-          else
-            sudo apt-get install -y sbt || true
-            SBT_CMD="sbt -no-colors"
-          fi
-          cd - >/dev/null
+          sbt -no-colors compile
+          # se ficar pesado demais, troque "test" por "compile" apenas
+          sbt -no-colors test
 
+      - name: vtriage run (VexRiscv REAL FULL = Verilator regression multi-config) -> analyze -> report (allow fail)
+        shell: bash
+        run: |
           vtriage run \
             --seeds 1 \
-            --cmd "bash -lc 'set -e; cd src/test/cpp/regression; make clean run IBUS=SIMPLE DBUS=SIMPLE CSR=no MMU=no DEBUG_PLUGIN=no MUL=no DIV=no'" \
+            --cmd "bash -lc 'set -e; cd src/test/cpp/regression; \
+            --cmd "bash -lc 'set -e; cd src/test/cpp/regression; \
+              make clean run IBUS=SIMPLE  DBUS=SIMPLE  CSR=no  MMU=no  DEBUG_PLUGIN=no MUL=no  DIV=no; \
+              make clean run IBUS=CACHED  DBUS=CACHED  CSR=yes MMU=no  DEBUG_PLUGIN=no MUL=yes DIV=yes; \
+              make clean run IBUS=CACHED  DBUS=CACHED  CSR=yes MMU=yes DEBUG_PLUGIN=no MUL=yes DIV=yes'" \
+
             --workdir _oss/vexriscv \
             --artifact-root artifacts \
             --out report \
@@ -407,11 +422,11 @@ jobs:
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: vexriscv-real-report
+          name: vexriscv-real-full-report
           path: report/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vexriscv-real-artifacts
+          name: vexriscv-real-full-report
           path: artifacts/
