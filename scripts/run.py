@@ -23,6 +23,7 @@ def main() -> int:
     ap.add_argument("--run-id", type=str, default="")
     ap.add_argument("--vcd-path", type=str, default="build/waves.vcd")
     ap.add_argument("--build-dir", type=str, default="build", help="Exportado como BUILD_DIR")
+    ap.add_argument("--cfg-path", default="", help="Path do .vtriage.toml usado no vtriage run (para reprodutibilidade)")
     args = ap.parse_args()
 
     repo_root = Path.cwd()
@@ -44,6 +45,7 @@ def main() -> int:
         "cmd_template": args.cmd,
         "vcd_path": args.vcd_path,
         "build_dir": args.build_dir,
+        "cfg_path": args.cfg_path or None,
     }
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 

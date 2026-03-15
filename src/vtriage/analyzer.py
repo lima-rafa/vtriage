@@ -723,5 +723,10 @@ def load_run_index(run_dir: Path) -> dict | None:
         return None
     if "clusters" not in data or "seeds" not in data:
         return None
+    if not isinstance(data.get("knobs"), dict): return None
+    if not isinstance(data.get("summary"), dict): return None
+    if not isinstance(data.get("seeds"), list): return None
+    if not isinstance(data.get("clusters"), list): return None
+
 
     return data

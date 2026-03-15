@@ -57,7 +57,7 @@ jobs:
             --workdir _oss/zipcpu \
             --artifact-root artifacts \
             --out report \
-            --no-analyze || true
+            --no-analyze
 
           vtriage analyze --latest --out ./report --reuse-index --json
 
@@ -117,7 +117,7 @@ jobs:
             --workdir _oss/zipcpu \
             --artifact-root artifacts \
             --out report \
-            --no-analyze || true
+            --no-analyze
 
           vtriage analyze --latest --out ./report --reuse-index --json
 
@@ -191,7 +191,7 @@ jobs:
             --workdir _oss/litex \
             --artifact-root artifacts \
             --out report \
-            --no-analyze || true
+            --no-analyze
 
           vtriage analyze --latest --out ./report --reuse-index --json
 
@@ -260,7 +260,7 @@ jobs:
             --workdir _oss/litex \
             --artifact-root artifacts \
             --out report \
-            --no-analyze || true
+            --no-analyze
 
           vtriage analyze --latest --out ./report --reuse-index --json
 
@@ -330,7 +330,7 @@ jobs:
             --workdir . \
             --artifact-root artifacts \
             --out report \
-            --no-analyze || true
+            --no-analyze
 
           vtriage analyze --latest --out ./report --reuse-index --json
 
@@ -425,7 +425,7 @@ jobs:
             --workdir _oss/vexriscv \
             --artifact-root artifacts \
             --out report \
-            --no-analyze || true
+            --no-analyze
 
           vtriage analyze --latest --out ./report --reuse-index --json
 

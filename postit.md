@@ -1,3 +1,5 @@
+se voce verificar no inicio do chat isso é o que foi listado
+
 # Roadmap v1 - Wave Triage
 
 ## 1) Núcleo do Produto (Funcional + Confiável)
@@ -144,7 +146,7 @@
 
 
 ###### -----------------------------------------
-
+mas la pra a metade do chat pedi que voce listasse e voce me enviou isso, voce se lembra ainda do objetivo correto?
 1) K — Polimento de CLI/UX
 K1 — Debug/verbosity (✅ parcialmente)
 
@@ -290,192 +292,106 @@ git commit -m "ci: add vexriscv real job"
 git push
 --------------------------------------
 
-name: oss-validate
+Checklist completo (com status)
+Vou usar:
+✅ concluído
 
-on:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: "Target to validate"
-        type: choice
-        required: true
-        default: "zipcpu"
-        options:
-          - zipcpu
-          - litex
-          - vexriscv
-          - all
 
-jobs:
-  zipcpu-real-full:
-    if: ${{ github.event.inputs.target == 'zipcpu' || github.event.inputs.target == 'all' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+🟡 parcial
 
-    steps:
-      - name: Checkout vtriage
-        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
+⬜ faltando
 
-      - name: Install vtriage (editable)
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e .
 
-      - name: System deps (Verilator + build tools)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y verilator g++ make libelf-dev libncurses-dev git
+K — Polimento de CLI/UX
+✅ K1.1 logs úteis (index not found/invalid/knobs/fp/reuse + debug)
 
-      - name: Clone ZipCPU
-        run: |
-          mkdir -p _oss
-          git clone --depth 1 https://github.com/ZipCPU/zipcpu.git _oss/zipcpu
 
-      - name: vtriage run (ZipCPU REAL FULL) -> analyze -> report (allow fail)
-        shell: bash
-        run: |
-          vtriage run \
-            --seeds 1 \
-            --cmd "bash -lc 'set -e; make rtl; make -C sim/verilator div_tb mpy_tb; ./sim/verilator/div_tb; ./sim/verilator/mpy_tb'" \
-            --workdir _oss/zipcpu \
-            --artifact-root artifacts \
-            --out report \
-            --no-analyze || true
+✅ K1.2 mensagens + exit codes padronizados (I3 junto)
 
-          vtriage analyze --latest --out ./report --reuse-index
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: zipcpu-real-full-report
-          path: report/
+✅ K2.1 --json gera report.json
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: zipcpu-real-full-artifacts
-          path: artifacts/
 
-  litex-real-full:
-    if: ${{ github.event.inputs.target == 'litex' || github.event.inputs.target == 'all' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+🟡 K2.2 reuse gera MD/HTML/JSON sem reanalisar (funciona; falta teste travando isso → L2)
 
-    steps:
-      - name: Checkout vtriage
-        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
+🟡 K2.3 schema/compat (você tem schemas; falta teste/nota de compat)
 
-      - name: Install vtriage (editable)
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e .
 
-      - name: System deps (git)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git
+✅ K3.1 show-run --latest
 
-      - name: Clone LiteX
-        run: |
-          mkdir -p _oss
-          git clone --depth 1 https://github.com/enjoy-digital/litex.git _oss/litex
 
-      - name: Install LiteX deps + LiteX (editable)
-        shell: bash
-        run: |
-          python -m pip install -U pip wheel setuptools
-          python -m pip install migen
-          python -m pip install -e _oss/litex
-          python -m pip install pytest
+✅ K3.2 --open cross-platform (e escrever HTML antes)
 
-      - name: vtriage run (LiteX REAL FULL = pytest suite) -> analyze -> report (allow fail)
-        shell: bash
-        run: |
-          vtriage run \
-            --seeds 1 \
-            --cmd "bash -lc 'set -e; python -m pytest -q'" \
-            --workdir _oss/litex \
-            --artifact-root artifacts \
-            --out report \
-            --no-analyze || true
 
-          vtriage analyze --latest --out ./report --reuse-index
+🟡 K3.3 help/usage com exemplos (já tem bons exemplos; dá pra refinar depois)
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: litex-real-full-report
-          path: report/
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: litex-real-full-artifacts
-          path: artifacts/
+✅ K4.1/K4.2 TOML determinístico (repo default + per-project via meta.json/workdir)
 
-  vexriscv-real-full:
-    if: ${{ github.event.inputs.target == 'vexriscv' || github.event.inputs.target == 'all' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
 
-    steps:
-      - name: Checkout vtriage
-        uses: actions/checkout@v4
+🟡 K4.3 normalização paths (boa parte pronta; faltam mais testes em Windows/Linux)
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
 
-      - name: Install vtriage (editable)
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e .
+✅ K5.1 README happy path (já está muito bom)
 
-      - name: System deps (Verilator + build tools + git)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git make g++ verilator
 
-      - name: Clone VexRiscv
-        run: |
-          mkdir -p _oss
-          git clone --depth 1 https://github.com/SpinalHDL/VexRiscv.git _oss/vexriscv
+⬜ K5.2 Troubleshooting “completo” (você já começou bem; falta só consolidar alguns casos extras)
 
-      - name: vtriage run (VexRiscv REAL FULL = Verilator regression) -> analyze -> report (allow fail)
-        shell: bash
-        run: |
-          vtriage run \
-            --seeds 1 \
-            --cmd "bash -lc 'set -e; cd src/test/cpp/regression; make clean run IBUS=SIMPLE DBUS=SIMPLE CSR=no MMU=no DEBUG_PLUGIN=no MUL=no DIV=no'" \
-            --workdir _oss/vexriscv \
-            --artifact-root artifacts \
-            --out report \
-            --no-analyze || true
 
-          vtriage analyze --latest --out ./report --reuse-index
+L — Testes automatizados (Pytest)
+🟡 L1 unit tests (você tem vários arquivos; ainda dá pra medir cobertura)
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: vexriscv-real-full-report
-          path: report/
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: vexriscv-real-full-artifacts
-          path: artifacts/
+✅ L2.1 run_dir fake (você já tem test_e2e_run_dir.py)
+
+
+🟡 L2.2 cluster + subcluster + reuse (falta teste específico do index reuse → o teste acima)
+
+
+🟡 L2.3 PASS-only e FAIL-only (provável que já tem; se não tiver, adicionar)
+
+
+⬜ L3.1 CI pytest (Windows + Ubuntu)
+
+
+⬜ L3.2 coverage/badge (opcional)
+
+
+M — Performance/escala VCD
+🟡 M1 guardrails (limites existem; ainda falta “mensagens claras + testes”)
+
+
+🟡 M2 cache/index (funciona; falta --no-wave-cache / --refresh-wave-cache)
+
+
+N — Contrato de artifacts
+🟡 N1 estrutura (meta.json, tests/seed_*, run_index.json ok; falta doc final curtinha)
+
+
+✅ N2 validações (validate_artifact_dir já está forte)
+
+
+O — Templates de CI e validação OSS
+✅ O1 CI do próprio vtriage
+
+
+✅ O2 oss-validate (targets + artifacts/upload)
+
+
+🟡 O3 “ordem de validação / escalonar” (você já tem; falta só decidir “full” do vexriscv no tempo)
+
+
+P — Dataset/Bug injection
+⬜ P1 bug injection MVP
+
+
+⬜ P2 métricas
+
+
+Q — Empacotamento
+✅ Q1 pip install -e / entrypoint ok
+
+
+⬜ Q2 version/tag release (opcional
