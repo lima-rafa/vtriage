@@ -34,9 +34,32 @@ jobs:
         run: |
           vtriage run --workdir ./examples/zipcpu --profile quick --no-analyze || true
 
-      - name: Analyze latest
+      # Analyze retorna:
+      # 0 = ok (sem FAIL)
+      # 1 = ok (com FAIL)  -> não queremos falhar o job no smoke
+      # 2/3/4 = erro real  -> aí sim falha
+      - name: Analyze latest (allow FAIL=1)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set +e
+          vtriage analyze --latest --out ./report --reuse-index
+          code=$?
+          echo "analyze_exit=$code"
+          if [ "$code" -eq 0 ] || [ "$code" -eq 1 ]; then
+            exit 0
+          fi
+          exit "$code"
+
+      - name: Analyze latest (allow FAIL=1) [Windows]
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           vtriage analyze --latest --out ./report --reuse-index
+          $code = $LASTEXITCODE
+          Write-Host "analyze_exit=$code"
+          if ($code -eq 0 -or $code -eq 1) { exit 0 }
+          exit $code
 
       - name: Upload report
         uses: actions/upload-artifact@v4

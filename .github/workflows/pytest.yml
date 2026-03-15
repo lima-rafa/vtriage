@@ -32,10 +32,10 @@ jobs:
 
       - name: Run tests (with coverage threshold)
         run: |
-          pytest -q ^
-            --cov=vtriage ^
-            --cov-report=term-missing ^
-            --cov-report=xml:coverage.xml ^
+          pytest -q
+            --cov=vtriage
+            --cov-report=term-missing
+            --cov-report=xml:coverage.xml
             --cov-fail-under=50
         shell: bash
 
