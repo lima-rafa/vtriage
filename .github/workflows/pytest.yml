@@ -1,0 +1,47 @@
+
+
+name: pytest
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        py: ["3.11"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+          cache: pip
+
+      - name: Install (editable + test deps)
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-cov
+
+      - name: Run tests (with coverage threshold)
+        run: |
+          pytest -q ^
+            --cov=vtriage ^
+            --cov-report=term-missing ^
+            --cov-report=xml:coverage.xml ^
+            --cov-fail-under=50
+        shell: bash
+
+      - name: Upload coverage.xml
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-py${{ matrix.py }}
+          path: coverage.xml
+          if-no-files-found: error

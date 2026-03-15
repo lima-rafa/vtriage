@@ -1,11 +1,10 @@
 
 
+![pytest](https://github.com/lima-rafa/vtriage/actions/workflows/pytest.yml/badge.svg)
+
 # vtriage
 
-
-
 CLI local-first (Windows/Linux) para triagem determinística de falhas em verificação/debug de RTL/FPGA usando **logs + waveforms** (VCD/FST).
-
 
 
 **MVP atual**
